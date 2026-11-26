@@ -1,12 +1,8 @@
-import { unzipSync } from 'fflate';
 import { PLUGIN_API_VERSION, type PluginManifest, type PluginModule, type ThemeContribution, type ThemeTokens } from './contracts.ts';
+import { MAX_PLUGIN_PACKAGE_BYTES, readPluginArchive } from './plugin-archive.ts';
 import { PluginValidationError, satisfiesPluginVersion, validatePluginManifest, validateThemeContribution } from './validation.ts';
 
-export const MAX_THEME_PACKAGE_BYTES = 512 * 1024;
-const MAX_JSON_BYTES = 16 * 1024;
-const MAX_COMPRESSED_JSON_BYTES = MAX_JSON_BYTES + 1024;
-const MAX_PREVIEW_BYTES = 512 * 1024;
-const decoder = new TextDecoder('utf-8', { fatal: true });
+export const MAX_THEME_PACKAGE_BYTES = MAX_PLUGIN_PACKAGE_BYTES;
 
 export interface ThemePlugin {
   readonly manifest: PluginManifest;
@@ -57,48 +53,9 @@ export function validateThemePlugin(value: unknown): ThemePlugin {
 }
 
 export function readThemePlugin(buffer: ArrayBuffer | Uint8Array): ThemePlugin {
-  if (buffer.byteLength < 22 || buffer.byteLength > MAX_THEME_PACKAGE_BYTES) {
-    throw new PluginValidationError('主题包大小超限或 ZIP 不完整。');
-  }
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  const seen = new Set<string>();
-  let files: ReturnType<typeof unzipSync>;
-  try {
-    files = unzipSync(bytes, {
-      filter: (entry) => {
-        const { name, size, originalSize, compression } = entry;
-        if (seen.has(name) || !['manifest.json', 'theme.json', 'preview.png'].includes(name)) {
-          throw new PluginValidationError('主题包仅支持不重复的 manifest.json、theme.json 和可选 preview.png。');
-        }
-        seen.add(name);
-        const limit = name === 'preview.png' ? MAX_PREVIEW_BYTES : MAX_JSON_BYTES;
-        if (
-          size > (name === 'preview.png' ? MAX_THEME_PACKAGE_BYTES : MAX_COMPRESSED_JSON_BYTES) || originalSize > limit ||
-          (compression !== 0 && compression !== 8) ||
-          (compression === 0 && size !== originalSize)
-        ) {
-          throw new PluginValidationError('主题包的条目大小或压缩格式不受支持。');
-        }
-        // Preview artwork is optional and never extracted or used as CSS.
-        return name !== 'preview.png';
-      },
-    });
-  } catch (error) {
-    if (error instanceof PluginValidationError) throw error;
-    throw new PluginValidationError('主题包无法解压。');
-  }
-  const manifestBytes = files['manifest.json'];
-  const themeBytes = files['theme.json'];
-  if (!manifestBytes || !themeBytes) throw new PluginValidationError('主题包缺少 manifest.json 或 theme.json。');
-  try {
-    return validateThemePlugin({
-      manifest: JSON.parse(decoder.decode(manifestBytes)),
-      theme: JSON.parse(decoder.decode(themeBytes)),
-    });
-  } catch (error) {
-    if (error instanceof PluginValidationError) throw error;
-    throw new PluginValidationError('主题包包含无法读取的 UTF-8 JSON。');
-  }
+  const archive = readPluginArchive(buffer);
+  if (archive.kind !== 'theme') throw new PluginValidationError('主题包需要 theme.json。');
+  return validateThemePlugin(archive);
 }
 
 export function createThemeModule(plugin: ThemePlugin): PluginModule {

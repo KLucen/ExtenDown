@@ -422,10 +422,10 @@ async fn read_document_image(
 }
 
 #[tauri::command]
-async fn open_theme_package(window: WebviewWindow) -> CommandResult<Option<Vec<u8>>> {
+async fn open_plugin_package(window: WebviewWindow) -> CommandResult<Option<Vec<u8>>> {
     let selected = rfd::AsyncFileDialog::new()
         .set_parent(&window)
-        .set_title("安装主题插件")
+        .set_title("选择 ExtenDown 插件包")
         .add_filter("ExtenDown 插件", &["edplugin"])
         .pick_file()
         .await;
@@ -440,7 +440,7 @@ async fn open_theme_package(window: WebviewWindow) -> CommandResult<Option<Vec<u
     {
         return Err("unsupported-file-type");
     }
-    bounded_read(file.path(), 2 * 1024 * 1024).map(Some)
+    bounded_read(file.path(), 512 * 1024).map(Some)
 }
 
 #[derive(Serialize)]
@@ -558,7 +558,7 @@ fn main() {
             restore_markdown_draft,
             discard_markdown_draft,
             read_document_image,
-            open_theme_package,
+            open_plugin_package,
             set_default_markdown_app,
             export::save_export,
             components::installed_components,

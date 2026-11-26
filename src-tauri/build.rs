@@ -16,7 +16,7 @@ fn main() {
             "restore_markdown_draft",
             "discard_markdown_draft",
             "read_document_image",
-            "open_theme_package",
+            "open_plugin_package",
             "set_default_markdown_app",
             "save_export",
             "installed_components",

@@ -2,12 +2,18 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PluginRegistry, builtinExporterModules, builtinExtraLanguagesModule, builtinMathModule, builtinMermaidModule,
-  createThemeModule, MAX_THEME_PACKAGE_BYTES, readThemePlugin, themeStyle, validateThemePlugin,
+  createThemeModule, themeStyle, validateThemePlugin, type ThemePlugin,
 } from '../core/plugins';
 import type { PluginModule, ThemeContribution } from '../core/plugins';
 import { loadAdditionalLanguages, loadMathRenderer } from '../core/plugins/reading-extensions';
 import type { ExportFormat } from '../core/export';
 import { errorMessage, type RecoveryDraft } from './document-session';
+import { MAX_PLUGIN_PACKAGE_BYTES, readPluginPackage } from '../core/plugins/plugin-package.ts';
+import {
+  getScriptPlugin, installScriptPlugin, rollbackScriptPlugin, setScriptPluginEnabled, uninstallScriptPlugin,
+  type ScriptPluginRecord,
+} from '../core/plugins/script-store.ts';
+import { permissionDescriptions, type useScriptPlugins } from './script-commands';
 
 const STORE_KEY = 'extendown.extensions.v1';
 const FORMATS = ['html', 'pdf', 'png', 'jpg'] as const;
@@ -38,7 +44,7 @@ const DARK_THEME: ThemeContribution = {
     border: '#3a4942', codeSurface: '#26322d', fontFamily: 'system-ui, sans-serif', readingWidth: '70ch',
   },
 };
-type ThemePackage = Awaited<ReturnType<typeof readThemePlugin>>;
+type ThemePackage = ThemePlugin;
 
 interface Preferences {
   configured: boolean;
@@ -248,9 +254,10 @@ export function FirstRun({ plugins, onClose }: { plugins: Extensions; onClose: (
   </dialog>;
 }
 
-export function Settings({ desktop, plugins, drafts, onDiscardDraft, onClose, launchDefaults }: {
+export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, onClose, launchDefaults }: {
   desktop: boolean;
   plugins: Extensions;
+  scripts: ReturnType<typeof useScriptPlugins>;
   drafts: RecoveryDraft[];
   onDiscardDraft: (id: string) => Promise<void>;
   onClose: () => void;
@@ -260,6 +267,7 @@ export function Settings({ desktop, plugins, drafts, onDiscardDraft, onClose, la
   const fileInput = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [packageBusy, setPackageBusy] = useState(false);
   const [tab, setTab] = useState<'general' | 'plugins'>('general');
   useEffect(() => { dialog.current?.showModal(); }, []);
 
@@ -267,24 +275,64 @@ export function Settings({ desktop, plugins, drafts, onDiscardDraft, onClose, la
     setStatus('');
     setError('');
     try {
-      const item = await readThemePlugin(buffer);
-      plugins.install(item);
-      setStatus('已安装 ' + item.manifest.name);
+      const item = readPluginPackage(buffer);
+      if ('source' in item) {
+        const previous = await getScriptPlugin(item.manifest.id);
+        if (previous && !window.confirm(`将 ${item.manifest.name} 更新到 ${item.manifest.version}？更新后需重新启用，可从插件列表回滚。`)) return;
+        await installScriptPlugin(item, previous?.current.manifest.version ?? null, previous?.generation);
+        setStatus(`已安装 ${item.manifest.name} ${item.manifest.version}。请在列表中启用此版本。`);
+      } else {
+        plugins.install(item);
+        setStatus('已安装 ' + item.manifest.name);
+      }
     } catch (reason) {
-      setError(errorMessage(reason, '无法安装主题包。'));
+      setError(errorMessage(reason, '无法安装插件包。'));
     }
   }
 
-  async function chooseTheme() {
+  async function choosePlugin() {
     if (!desktop) {
       fileInput.current?.click();
       return;
     }
+    setPackageBusy(true);
     try {
-      const bytes = await invoke<number[] | null>('open_theme_package');
+      const bytes = await invoke<number[] | null>('open_plugin_package');
       if (bytes) await install(new Uint8Array(bytes).buffer);
     } catch (reason) {
-      setError(errorMessage(reason, '无法打开主题插件文件。'));
+      setError(errorMessage(reason, '无法打开插件文件。'));
+    } finally {
+      setPackageBusy(false);
+    }
+  }
+
+  async function changeScript(record: ScriptPluginRecord, action: 'toggle' | 'rollback' | 'remove') {
+    const { id, name, version } = record.current.manifest;
+    if (action === 'toggle' && !record.enabled) {
+      const permissions = permissionDescriptions(record.current);
+      const description = permissions.length ? permissions.join('\n') : '此插件请求的文档权限为空。';
+      if (!window.confirm(`启用 ${name} ${version}？\n\n${description}`)) return;
+    }
+    if (action === 'rollback' && !window.confirm(`将 ${name} 回滚到 ${record.previous?.manifest.version}？回滚后需重新启用。`)) return;
+    if (action === 'remove' && !window.confirm(`卸载 ${name} 及其回滚版本？`)) return;
+    setPackageBusy(true);
+    setError('');
+    setStatus('');
+    try {
+      if (action === 'toggle') {
+        await setScriptPluginEnabled(id, version, !record.enabled, record.generation);
+        setStatus(record.enabled ? `已停用 ${name}。` : `已启用 ${name}。可从顶栏「命令」运行。`);
+      } else if (action === 'rollback' && record.previous) {
+        await rollbackScriptPlugin(id, version, record.previous.manifest.version, record.generation);
+        setStatus(`已回滚 ${name}。请在列表中启用该版本。`);
+      } else if (action === 'remove') {
+        await uninstallScriptPlugin(id, version, record.generation);
+        setStatus(`已卸载 ${name}。`);
+      }
+    } catch (reason) {
+      setError(errorMessage(reason, '无法更新插件状态。'));
+    } finally {
+      setPackageBusy(false);
     }
   }
 
@@ -356,17 +404,39 @@ export function Settings({ desktop, plugins, drafts, onDiscardDraft, onClose, la
         <small>v{item.manifest.version} · 本地主题</small>
         <button type="button" onClick={() => removeTheme(item.manifest.id)}>卸载</button>
       </div>)}
-      <button type="button" className="setting-action" onClick={chooseTheme}>安装插件文件</button>
+      <h3>第三方命令插件</h3>
+      {scripts.error && <p role="alert" className="error">{scripts.error}</p>}
+      {scripts.records.map(record => {
+        const { id, name, version } = record.current.manifest;
+        const permissions = permissionDescriptions(record.current);
+        return <div className="script-plugin" key={id}>
+          <strong>{name}</strong>
+          <small>{id} · v{version} · 本地文件 · {record.enabled ? '已启用' : '已停用'}</small>
+          <small>{permissions.length ? permissions.join('、') : '无文档权限'}</small>
+          <div className="dialog-actions">
+            <button type="button" className="setting-action" disabled={packageBusy} onClick={() => void changeScript(record, 'toggle')}>
+              {record.enabled ? '停用' : '启用'}
+            </button>
+            {record.previous && <button type="button" className="setting-action" disabled={packageBusy}
+              onClick={() => void changeScript(record, 'rollback')}>回滚</button>}
+            <button type="button" className="setting-action" disabled={packageBusy}
+              onClick={() => void changeScript(record, 'remove')}>卸载</button>
+          </div>
+        </div>;
+      })}
+      <button type="button" className="setting-action" disabled={packageBusy} onClick={choosePlugin}>安装插件文件</button>
       <input ref={fileInput} type="file" accept=".edplugin" hidden onChange={async event => {
         const file = event.currentTarget.files?.[0];
         event.currentTarget.value = '';
         if (!file) return;
-        if (file.size > MAX_THEME_PACKAGE_BYTES) {
-          setError('主题包不能超过 512 KiB。');
+        if (file.size > MAX_PLUGIN_PACKAGE_BYTES) {
+          setError('插件包不能超过 512 KiB。');
           return;
         }
+        setPackageBusy(true);
         try { await install(await file.arrayBuffer()); }
-        catch (reason) { setError(errorMessage(reason, '无法读取主题文件。')); }
+        catch (reason) { setError(errorMessage(reason, '无法读取插件文件。')); }
+        finally { setPackageBusy(false); }
       }} />
     </section>}
     {(status || error) && <div className="settings-section">

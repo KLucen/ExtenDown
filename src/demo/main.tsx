@@ -14,6 +14,7 @@ import { MarkdownPreview } from '../renderer/markdown-preview';
 import { SourceSurface } from '../renderer/source-surface';
 import type { SourceSurfaceHandle } from '../renderer/source-surface';
 import { useDocument } from './document-session';
+import { ScriptCommands, useScriptPlugins, type ScriptRunEntry } from './script-commands';
 import { FirstRun, Settings, useExtensions } from './settings';
 import './style.css';
 
@@ -33,10 +34,13 @@ function App() {
   const session = useDocument(surface);
   const { view, source, selection, desktop, dirty, pending } = session;
   const plugins = useExtensions();
+  const scriptPlugins = useScriptPlugins();
   const windowsChrome = desktop && /\bWindows\b/u.test(navigator.userAgent);
   const [mode, setMode] = useState<ViewMode>('split');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [commandsOpen, setCommandsOpen] = useState(false);
+  const [scriptHistory, setScriptHistory] = useState<ScriptRunEntry[]>([]);
   const [exportSnapshot, setExportSnapshot] = useState<DocumentSnapshot | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -112,12 +116,12 @@ function App() {
     function keyboard(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         menu.current?.removeAttribute('open');
-        if (!exportSnapshot && !settingsOpen) {
+        if (!exportSnapshot && !settingsOpen && !commandsOpen) {
           setPresentation(false);
           setSearchOpen(false);
         }
       }
-      if (event.isComposing || (!event.ctrlKey && !event.metaKey) || event.altKey || settingsOpen || exportSnapshot) return;
+      if (event.isComposing || (!event.ctrlKey && !event.metaKey) || event.altKey || settingsOpen || commandsOpen || exportSnapshot) return;
       switch (event.key.toLowerCase()) {
         case 'o': event.preventDefault(); void openDocument(); break;
         case 's':
@@ -184,6 +188,8 @@ function App() {
             if (session.canLeaveInput()) setPresentation(value => !value);
           }}>专注</button>}
           <button type="button" onClick={exportDocument} disabled={pending || !plugins.formats.length}>导出</button>
+          {(scriptHistory.length > 0 || scriptPlugins.records.some(record => record.enabled)) && <button type="button" disabled={pending}
+            onClick={() => { if (session.canLeaveInput()) setCommandsOpen(true); }}>命令</button>}
           <button type="button" onClick={() => {
             void session.refreshLists();
             setSettingsOpen(true);
@@ -260,8 +266,14 @@ function App() {
         event.currentTarget.value = '';
         if (file) void session.openBrowserFile(file);
       }} />
-      {settingsOpen && <Settings desktop={desktop} plugins={plugins} drafts={session.drafts} onDiscardDraft={session.discard}
+      {settingsOpen && <Settings desktop={desktop} plugins={plugins} scripts={scriptPlugins} drafts={session.drafts} onDiscardDraft={session.discard}
         onClose={() => setSettingsOpen(false)} launchDefaults={() => invoke('set_default_markdown_app')} />}
+      {commandsOpen && <ScriptCommands records={scriptPlugins.records} onClose={() => setCommandsOpen(false)}
+        history={scriptHistory} onRunEntry={entry => setScriptHistory(previous => [entry, ...previous.slice(0, 19)])}
+        readDocument={() => pending || !session.canLeaveInput() ? null : {
+          key: view.key, revision: session.currentRevision(), source: session.currentSource(), format: view.format,
+        }}
+        replaceText={value => !pending && !mixed && (surface.current?.replaceText(value) ?? false)} />}
       {desktop && !pending && !plugins.preferences.configured &&
         <FirstRun plugins={plugins} onClose={() => undefined} />}
       {exportSnapshot && <ExportDialog snapshot={exportSnapshot} formats={plugins.formats} onClose={() => setExportSnapshot(null)}

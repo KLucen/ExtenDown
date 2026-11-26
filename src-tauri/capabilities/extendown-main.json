@@ -26,7 +26,7 @@
     "allow-restore-markdown-draft",
     "allow-discard-markdown-draft",
     "allow-read-document-image",
-    "allow-open-theme-package",
+    "allow-open-plugin-package",
     "allow-set-default-markdown-app",
     "allow-save-export",
     "allow-installed-components"

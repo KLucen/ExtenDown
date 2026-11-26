@@ -128,6 +128,18 @@ dialog::backdrop { background: #14221c55; }
 .component-options .setting-action { grid-column: 1 / -1; margin-top: 4px; }
 .plugin-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .plugin-row > span, .plugin-row > label { overflow: hidden; text-overflow: ellipsis; }
+.script-plugin { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.script-plugin .setting-action { padding-block: 3px; }
+.script-command-select { display: grid; gap: 4px; min-width: 0; }
+.script-command-select select { width: 100%; min-width: 0; }
+.script-review-modal { width: min(calc(100% - 32px), 950px); }
+.script-review { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.script-review label { display: grid; gap: 4px; min-width: 0; }
+.script-review textarea { width: 100%; height: clamp(110px, 35vh, 360px); resize: vertical; color: var(--text);
+  background: var(--surface-soft); border: 1px solid var(--line); border-radius: 4px; font: .9rem/1.55 var(--mono); }
+.script-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.script-run-history { overflow-wrap: anywhere; }
+.script-run-history ul { max-height: 8rem; overflow: auto; margin: 6px 0 0; padding-inline-start: 1.5em; }
 .export-dialog { width: min(calc(100% - 24px), 880px); max-height: calc(100% - 24px); }
 .export-frame { display: block; width: 100%; height: clamp(130px, 42vh, 480px); border: 1px solid var(--line); background: white; }
 .export-options, .dialog-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }

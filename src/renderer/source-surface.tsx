@@ -1,6 +1,6 @@
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import { defaultKeymap, insertNewline } from '@codemirror/commands';
+import { defaultKeymap, insertNewline, isolateHistory } from '@codemirror/commands';
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 
@@ -17,6 +17,7 @@ export interface SourceSurfaceHandle {
   composing(): boolean;
   selection(): SourceSelection;
   select(selection: SourceSelection, reveal?: boolean): void;
+  replaceText(value: string): boolean;
 }
 interface Props {
   readonly documentKey: string;
@@ -59,6 +60,17 @@ export const SourceSurface = forwardRef<SourceSurfaceHandle, Props>(function Sou
       return document && Number.isSafeInteger(line) && line >= 1 && line <= document.lines ? document.line(line).from : null;
     },
     selection: () => editor.current ? selection(editor.current) : { start: 0, end: 0, direction: 'none' },
+    replaceText: value => {
+      const view = editor.current;
+      if (!view || compositionActive.current || view.state.readOnly) return false;
+      const { anchor, head } = view.state.selection.main;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: value },
+        selection: EditorSelection.single(Math.min(anchor, value.length), Math.min(head, value.length)),
+        annotations: isolateHistory.of('full'),
+      });
+      return true;
+    },
     select: (next, reveal) => {
       const view = editor.current;
       if (!view || compositionActive.current) return;

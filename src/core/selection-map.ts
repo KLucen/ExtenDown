@@ -1,0 +1,375 @@
+import type { Heading, Paragraph, PhrasingContent, TableCell } from 'mdast';
+import { parseMarkdownSnapshot, type MarkdownSnapshot } from './markdown-snapshot.ts';
+
+interface TextLeaf {
+  readonly visibleStart: number;
+  readonly visibleEnd: number;
+  readonly sourceStart: number;
+  readonly sourceEnd: number;
+  readonly exact: boolean;
+  readonly commonPrefix: number;
+  readonly commonSuffix: number;
+}
+
+export interface SelectionBlock {
+  /** UTF-16 offset in the BOM-stripped Markdown passed to the parser. */
+  readonly blockStart: number;
+  /** End offset of the parsed block, used by the narrow reader edit mapper. */
+  readonly blockEnd: number;
+  readonly kind: 'heading' | 'paragraph' | 'tableCell';
+  readonly visibleText: string;
+  readonly supported: boolean;
+  readonly reason?: string;
+  readonly leaves: readonly TextLeaf[];
+}
+
+export interface SelectionMap {
+  readonly blocks: readonly SelectionBlock[];
+  /** Decoded source without a leading UTF-8 BOM; line endings are unchanged. */
+  readonly source: string;
+  readonly bomByteLength: 0 | 3;
+}
+
+export type SelectionResolution =
+  | {
+      readonly ok: true;
+      /** Parser block and visible UTF-16 range used to validate inline edits. */
+      readonly blockStart: number;
+      readonly visibleStart: number;
+      readonly visibleEnd: number;
+      /** Half-open UTF-8 byte range in the original file, including BOM bytes. */
+      readonly startByte: number;
+      readonly endByte: number;
+      /** Original Markdown syntax between the selected visible characters. */
+      readonly sourceExact: string;
+      readonly displayQuote: string;
+      /** UTF-16 offsets within the BOM-stripped source string. */
+      readonly sourceStart: number;
+      readonly sourceEnd: number;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+export type StoredHighlightResolution =
+  | {
+      readonly ok: true;
+      /** Parser offset identifying the rendered paragraph or heading. */
+      readonly blockStart: number;
+      /** Half-open UTF-16 range in that block's visible text. */
+      readonly visibleStart: number;
+      readonly visibleEnd: number;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+const encoder = new TextEncoder();
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function commonEdges(raw: string, value: string): { prefix: number; suffix: number } {
+  let prefix = 0;
+  while (prefix < raw.length && prefix < value.length && raw[prefix] === value[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < raw.length - prefix &&
+    suffix < value.length - prefix &&
+    raw[raw.length - 1 - suffix] === value[value.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  return { prefix, suffix };
+}
+
+function addTextLeaf(
+  node: { readonly value: string; readonly position?: { readonly start: { readonly offset?: number }; readonly end: { readonly offset?: number } } },
+  source: string,
+  blockStart: number,
+  blockEnd: number,
+  visibleText: string,
+  leaves: TextLeaf[],
+): string | null {
+  const sourceStart = node.position?.start.offset;
+  const sourceEnd = node.position?.end.offset;
+  if (
+    sourceStart === undefined || sourceEnd === undefined ||
+    sourceStart < blockStart || sourceEnd > blockEnd || sourceEnd < sourceStart ||
+    node.value.length === 0
+  ) {
+    return '解析器未提供可用的原文位置。';
+  }
+  const raw = source.slice(sourceStart, sourceEnd);
+  const { prefix, suffix } = commonEdges(raw, node.value);
+  leaves.push({
+    visibleStart: visibleText.length,
+    visibleEnd: visibleText.length + node.value.length,
+    sourceStart,
+    sourceEnd,
+    exact: raw === node.value,
+    commonPrefix: prefix,
+    commonSuffix: suffix,
+  });
+  return null;
+}
+
+function buildBlock(node: Heading | Paragraph | TableCell, source: string): SelectionBlock {
+  const blockStart = node.position?.start.offset;
+  const blockEnd = node.position?.end.offset;
+  if (blockStart === undefined || blockEnd === undefined) {
+    return { blockStart: -1, blockEnd: -1, kind: node.type, visibleText: '', supported: false, reason: '解析器未提供块位置。', leaves: [] };
+  }
+
+  let visibleText = '';
+  const leaves: TextLeaf[] = [];
+  let reason: string | undefined;
+  const visit = (inline: PhrasingContent): void => {
+    if (reason) return;
+    if (inline.type === 'text') {
+      reason = addTextLeaf(inline, source, blockStart, blockEnd, visibleText, leaves) ?? undefined;
+      if (!reason) visibleText += inline.value;
+      return;
+    }
+    if (inline.type === 'inlineCode') {
+      // The backticks remain part of the source anchor. Interior selections
+      // are rejected by sourceBoundary, while selecting the whole rendered
+      // code span remains reversible and can be annotated safely.
+      reason = addTextLeaf(inline, source, blockStart, blockEnd, visibleText, leaves) ?? undefined;
+      if (!reason) visibleText += inline.value;
+      return;
+    }
+    if (
+      inline.type === 'emphasis' || inline.type === 'strong' ||
+      inline.type === 'delete' || inline.type === 'link' || inline.type === 'linkReference'
+    ) {
+      inline.children.forEach(visit);
+      return;
+    }
+    reason = `当前选区所在块包含暂不支持的 ${inline.type} 内容。`;
+  };
+  node.children.forEach(visit);
+  return { blockStart, blockEnd, kind: node.type, visibleText, supported: !reason && leaves.length > 0, reason, leaves };
+}
+
+/** Build a source map for rendered paragraphs and headings without changing Markdown. */
+export function buildSelectionMap(content: string, bomByteLength: number): SelectionMap {
+  validateBom(content, bomByteLength);
+  return selectionMapFromSnapshot(parseMarkdownSnapshot(content), bomByteLength);
+}
+
+function validateBom(content: string, bomByteLength: number): asserts bomByteLength is 0 | 3 {
+  if (bomByteLength !== 0 && bomByteLength !== 3) {
+    throw new Error('无效的 UTF-8 BOM 长度。');
+  }
+  if (content.startsWith('\uFEFF') && bomByteLength !== 3) {
+    throw new Error('正文和 BOM 元数据不一致。');
+  }
+}
+
+export function selectionMapFromSnapshot(snapshot: MarkdownSnapshot, bomByteLength: 0 | 3): SelectionMap {
+  validateBom(snapshot.source, bomByteLength);
+  const { body: source, root } = snapshot;
+  const blocks: SelectionBlock[] = [];
+  const visit = (node: { type: string; children?: readonly unknown[] }): void => {
+    if (node.type === 'heading' || node.type === 'paragraph' || node.type === 'tableCell') {
+      blocks.push(buildBlock(node as Heading | Paragraph | TableCell, source));
+      return;
+    }
+    node.children?.forEach((child) => visit(child as { type: string; children?: readonly unknown[] }));
+  };
+  visit(root);
+  return { blocks, source, bomByteLength };
+}
+
+function atGraphemeBoundary(text: string, offset: number): boolean {
+  if (offset === 0 || offset === text.length) return true;
+  for (const { index } of graphemeSegmenter.segment(text)) {
+    if (index === offset) return true;
+    if (index > offset) return false;
+  }
+  return false;
+}
+
+function sourceBoundary(leaf: TextLeaf, offset: number, side: 'start' | 'end'): number | null {
+  const relative = offset - leaf.visibleStart;
+  const length = leaf.visibleEnd - leaf.visibleStart;
+  if (relative === 0 && side === 'start') return leaf.sourceStart;
+  if (relative === length && side === 'end') return leaf.sourceEnd;
+  if (leaf.exact || relative <= leaf.commonPrefix) return leaf.sourceStart + relative;
+  if (relative >= length - leaf.commonSuffix) return leaf.sourceEnd - (length - relative);
+  return null;
+}
+
+function cutsEncodedSource(leaf: TextLeaf, boundary: number, source: string): boolean {
+  if (boundary <= leaf.sourceStart || boundary >= leaf.sourceEnd) return false;
+  const raw = source.slice(leaf.sourceStart, leaf.sourceEnd);
+  const relative = boundary - leaf.sourceStart;
+  const encoded = /&(?:#(?:[xX][0-9a-fA-F]+|[0-9]+)|[A-Za-z][A-Za-z0-9]+);?|\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|\r\n/g;
+  for (const match of raw.matchAll(encoded)) {
+    if (match.index < relative && relative < match.index + match[0].length) return true;
+  }
+  return false;
+}
+
+/** Resolve a nonempty selection in one rendered block to original file bytes. */
+export function resolveSelection(
+  map: SelectionMap,
+  blockStart: number,
+  visibleStart: number,
+  visibleEnd: number,
+): SelectionResolution {
+  return resolveSelectionWithOffsets(map, blockStart, visibleStart, visibleEnd,
+    offset => encoder.encode(map.source.slice(0, offset)).length);
+}
+
+function resolveSelectionWithOffsets(
+  map: SelectionMap, blockStart: number, visibleStart: number, visibleEnd: number,
+  byteOffset: (offset: number) => number,
+): SelectionResolution {
+  const block = map.blocks.find((entry) => entry.blockStart === blockStart);
+  if (!block) return { ok: false, reason: '选区不在可映射的段落或标题内。' };
+  if (!block.supported) return { ok: false, reason: block.reason ?? '当前块暂不支持精确映射。' };
+  if (
+    !Number.isInteger(visibleStart) || !Number.isInteger(visibleEnd) ||
+    visibleStart < 0 || visibleEnd > block.visibleText.length || visibleStart >= visibleEnd
+  ) {
+    return { ok: false, reason: '选区范围无效或为空。' };
+  }
+  if (
+    !atGraphemeBoundary(block.visibleText, visibleStart) ||
+    !atGraphemeBoundary(block.visibleText, visibleEnd)
+  ) {
+    return { ok: false, reason: '选区边界落在组合字符内部。' };
+  }
+  if (/[\r\n]/.test(block.visibleText.slice(visibleStart, visibleEnd))) {
+    return { ok: false, reason: '当前原型暂不支持包含软换行的选区。' };
+  }
+
+  const first = block.leaves.find((leaf) => leaf.visibleStart <= visibleStart && visibleStart < leaf.visibleEnd);
+  const last = block.leaves.find((leaf) => leaf.visibleStart < visibleEnd && visibleEnd <= leaf.visibleEnd);
+  if (!first || !last) return { ok: false, reason: '无法确定选区的源码边界。' };
+  const sourceStart = sourceBoundary(first, visibleStart, 'start');
+  const sourceEnd = sourceBoundary(last, visibleEnd, 'end');
+  if (
+    sourceStart === null || sourceEnd === null || sourceStart >= sourceEnd ||
+    cutsEncodedSource(first, sourceStart, map.source) ||
+    cutsEncodedSource(last, sourceEnd, map.source)
+  ) {
+    return { ok: false, reason: '选区包含无法精确定位的转义或实体边界。' };
+  }
+  return {
+    ok: true,
+    blockStart,
+    visibleStart,
+    visibleEnd,
+    startByte: map.bomByteLength + byteOffset(sourceStart),
+    endByte: map.bomByteLength + byteOffset(sourceEnd),
+    sourceExact: map.source.slice(sourceStart, sourceEnd),
+    displayQuote: block.visibleText.slice(visibleStart, visibleEnd),
+    sourceStart,
+    sourceEnd,
+  };
+}
+
+/**
+ * Invert a stored source anchor only when one supported rendered range maps
+ * back to exactly the same original bytes and visible quote. A matching word
+ * elsewhere in the document is never sufficient to display a highlight.
+ */
+export function resolveStoredHighlight(
+  map: SelectionMap,
+  anchor: {
+    readonly startByte: number;
+    readonly endByte: number;
+    readonly sourceExact: string;
+    readonly displayQuote: string;
+  },
+): StoredHighlightResolution {
+  // Single-anchor callers retain the full-scan path; only explicit batches
+  // retain an index, so saving/transaction checks do not build one per anchor.
+  return resolveStoredHighlightIndexed(map, anchor, () => ({
+    sourceBytes: encoder.encode(map.source),
+    byteOffset: offset => encoder.encode(map.source.slice(0, offset)).length,
+    blocks: map.blocks.map(block => ({ block, range: null })),
+  }));
+}
+
+type StoredAnchor = Parameters<typeof resolveStoredHighlight>[1];
+
+/** A batch resolver bound to one immutable selection-map snapshot; never global. */
+export function createStoredHighlightResolver(map: SelectionMap): (anchor: StoredAnchor) => StoredHighlightResolution {
+  let index: ReturnType<typeof storedHighlightIndex> | undefined;
+  return anchor => resolveStoredHighlightIndexed(map, anchor, () => index ??= storedHighlightIndex(map));
+}
+
+function storedHighlightIndex(map: SelectionMap) {
+  const source = map.source;
+  const boundary = (offset: number) => Number.isSafeInteger(offset) && offset >= 0 && offset <= source.length &&
+    !(offset > 0 && offset < source.length && /[\uDC00-\uDFFF]/u.test(source[offset]) && /[\uD800-\uDBFF]/u.test(source[offset - 1]));
+  const points = [...new Set([0, source.length, ...map.blocks.flatMap(block => [block.blockStart, block.blockEnd])])]
+    .filter(boundary).sort((a, b) => a - b);
+  const seen = new Set<number>(); const duplicated = new Set<number>();
+  for (const block of map.blocks) {
+    if (seen.has(block.blockStart)) duplicated.add(block.blockStart);
+    seen.add(block.blockStart);
+  }
+  const bytesAt = [0];
+  for (let i = 1; i < points.length; i++) {
+    bytesAt.push(bytesAt[i - 1] + encoder.encode(source.slice(points[i - 1], points[i])).length);
+  }
+  const byteOffset = (offset: number): number => {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > source.length) return encoder.encode(source.slice(0, offset)).length;
+    let low = 0; let high = points.length;
+    while (low + 1 < high) {
+      const middle = (low + high) >>> 1;
+      if (points[middle] <= offset) low = middle; else high = middle;
+    }
+    return bytesAt[low] + encoder.encode(source.slice(points[low], offset)).length;
+  };
+  return { sourceBytes: encoder.encode(source), byteOffset,
+    blocks: map.blocks.map(block => ({ block, range: !duplicated.has(block.blockStart) && boundary(block.blockStart) && boundary(block.blockEnd) && block.blockStart <= block.blockEnd
+      ? { start: byteOffset(block.blockStart), end: byteOffset(block.blockEnd) } : null })) };
+}
+
+function resolveStoredHighlightIndexed(
+  map: SelectionMap, anchor: StoredAnchor, getIndex: () => ReturnType<typeof storedHighlightIndex>,
+): StoredHighlightResolution {
+  const { startByte, endByte, sourceExact, displayQuote } = anchor;
+  if (
+    !Number.isSafeInteger(startByte) || !Number.isSafeInteger(endByte) ||
+    startByte < map.bomByteLength || startByte >= endByte ||
+    sourceExact.length === 0 || displayQuote.length === 0
+  ) {
+    return { ok: false, reason: '存储的高亮锚点范围无效。' };
+  }
+
+  const { sourceBytes, byteOffset, blocks } = getIndex();
+  const exactBytes = encoder.encode(sourceExact);
+  const relativeStart = startByte - map.bomByteLength;
+  const relativeEnd = endByte - map.bomByteLength;
+  if (
+    relativeEnd > sourceBytes.length || exactBytes.length !== endByte - startByte ||
+    !sourceBytes.subarray(relativeStart, relativeEnd).every((byte, index) => byte === exactBytes[index])
+  ) {
+    return { ok: false, reason: '存储的高亮锚点与当前原文不一致。' };
+  }
+
+  let match: { blockStart: number; visibleStart: number; visibleEnd: number } | undefined;
+  for (const { block, range } of blocks) {
+    if (!block.supported) continue;
+    if (range && (relativeStart < range.start || relativeEnd > range.end)) continue;
+    let visibleStart = block.visibleText.indexOf(displayQuote);
+    while (visibleStart !== -1) {
+      const visibleEnd = visibleStart + displayQuote.length;
+      const resolved = resolveSelectionWithOffsets(map, block.blockStart, visibleStart, visibleEnd, byteOffset);
+      if (
+        resolved.ok && resolved.startByte === startByte && resolved.endByte === endByte &&
+        resolved.sourceExact === sourceExact && resolved.displayQuote === displayQuote
+      ) {
+        if (match) return { ok: false, reason: '高亮锚点对应多个可见选区，无法安全绘制。' };
+        match = { blockStart: block.blockStart, visibleStart, visibleEnd };
+      }
+      visibleStart = block.visibleText.indexOf(displayQuote, visibleStart + 1);
+    }
+  }
+  return match
+    ? { ok: true, ...match }
+    : { ok: false, reason: '高亮锚点无法精确还原为当前阅读选区。' };
+}

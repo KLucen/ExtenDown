@@ -231,6 +231,7 @@ Function PageReinstall
   ReadRegStr $R0 SHCTX "${UNINSTKEY}" ""
   ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
   ${IfThen} "$R0$R1" == "" ${|} Abort ${|}
+  ${IfThen} $UpdateMode = 1 ${|} Abort ${|}
 
   ; Compare this installar version with the existing installation
   ; and modify the messages presented to the user accordingly
@@ -306,16 +307,20 @@ Function PageReinstall
     !endif
     ${NSD_OnClick} $R3 PageReinstallUpdateSelection
 
-    ; Check the first radio button if this the first time
-    ; we enter this page or if the second button wasn't
-    ; selected the last time we were on this page
+    ; Default to an in-place upgrade for existing NSIS installations.
+    ${If} $ReinstallPageCheck == ""
+    ${AndIf} $R0 = 1
+    ${AndIf} $WixMode <> 1
+      StrCpy $ReinstallPageCheck 2
+    ${EndIf}
     ${If} $ReinstallPageCheck <> 2
       SendMessage $R2 ${BM_SETCHECK} ${BST_CHECKED} 0
+      ${NSD_SetFocus} $R2
     ${Else}
       SendMessage $R3 ${BM_SETCHECK} ${BST_CHECKED} 0
+      ${NSD_SetFocus} $R3
     ${EndIf}
 
-    ${NSD_SetFocus} $R2
     nsDialogs::Show
   ${EndIf}
 FunctionEnd
@@ -365,6 +370,7 @@ Function PageLeaveReinstall
   ${EndIf}
 
   reinst_uninstall:
+    Call ExtendownLoadChoices
     HideWindow
     ClearErrors
 

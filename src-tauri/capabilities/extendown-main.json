@@ -30,6 +30,7 @@
     "allow-set-default-markdown-app",
     "allow-save-export",
     "allow-installed-components",
+    "allow-install-official-component",
     "allow-choose-workspace",
     "allow-close-workspace",
     "allow-workspace-list",

@@ -28,6 +28,8 @@ Windows 便携版本由 `extendown.exe` 和同目录的 `extendown-components/` 
 
 Windows 当前用户默认安装到 `%LOCALAPPDATA%\extendown\app`。安装向导可更改目标目录，命令行也支持显式的 `/D=` 路径。升级时沿用仍有有效卸载登记的安装目录。卸载时移除该目录对应的安装路径记录。
 
+每轮开发验收后，从 `bundle/nsis/` 运行新版本安装包覆盖更新。向导默认保留当前安装，组件页沿用旧版已安装组件。自动化覆盖更新可在关闭 ExtenDown 后运行 `ExtenDown_<版本>_x64-setup.exe /S /UPDATE`。
+
 ## 窗口与文档
 
 顶栏集中提供文件、查找、目录、专注、导出和设置。左侧的源码、并排和预览按钮切换编辑布局，顶栏左端的按钮负责收起或展开整个侧栏。Windows 桌面版将窗口操作放在同一顶栏右端。
@@ -55,9 +57,9 @@ Windows 的 NSIS 安装器通过 `src-tauri/windows/file-associations.nsh` 注�
 
 标题锚点、选区、目录和预览都来自当时的文档草稿。保留同一个 `documentKey` 以维持视图间的撤销历史，并在打开另一份文档时重建编辑器会话。输入法候选期间，保存和切换文档等待组合输入结束。原始 HTML 经现有白名单和清洗流程，公式和高亮由已验证的内置转换器生成。相对图片由 Rust 在文档目录范围内解析、检查文件类型和读取大小。[Tauri 权限](https://v2.tauri.app/security/capabilities/) · [内容安全策略](https://v2.tauri.app/security/csp/)
 
-首次启动可选择启用公式、Mermaid、专注视图与各导出格式，之后在「设置 → 插件」调整已安装的扩展。数学扩展支持 `$…$` 和 `$$` 公式，可离线渲染为 MathML。Mermaid 从 `mermaid` 围栏生成图像，关闭模块或排版失败时保留代码块。高亮支持 Bash、CSS、JavaScript、JSON、Python、Rust、SQL、TypeScript 与 XML/HTML。
+首次启动直接进入编辑器。预览及并排中的普通段落、标题可单击编辑，键盘可聚焦后按 Enter。数学扩展支持 `$…$` 和 `$$` 公式，可离线渲染为 MathML。Mermaid 从 `mermaid` 围栏生成图像，关闭模块或排版失败时保留代码块。高亮支持 Bash、CSS、JavaScript、JSON、Python、Rust、SQL、TypeScript 与 XML/HTML。
 
-Windows 安装器的组件页提供 HTML、PDF、PNG/JPG、数学公式、Mermaid、专注视图、额外代码语言和 Midnight 主题。额外语言包提供 C、C++、C#、Go、Java、Lua、Markdown 和 PowerShell。标准选择包含所有组件。更改物理安装内容时重新运行安装器。插件设置用于启停已安装组件，也可为 PNG 和 JPG 分别设置启用状态。
+Windows 安装器的组件页提供 HTML、PDF、PNG/JPG、数学公式、Mermaid、专注视图、额外代码语言和 Midnight 主题。额外语言包提供 C、C++、C#、Go、Java、Lua、Markdown 和 PowerShell。「设置 → 插件」展示全部官方组件，已安装组件可启停，未安装组件可离线补装。PNG 和 JPG 共用一套安装资源，可在安装后分别启停。
 
 ### 官方模块
 
@@ -69,7 +71,7 @@ Windows 安装器的组件页提供 HTML、PDF、PNG/JPG、数学公式、Mermai
 
 若模块需要独立安装，在 `scripts/optional-components.mjs` 登记动态入口，并将组件 ID 接入 `src-tauri/windows/components.nsh`。Windows 构建从内嵌资源中移出该入口的专用代码，NSIS 根据组件选择复制文件。Rust 宿主只从本版内置的资源清单中查找这些文件，并在加载前核对 SHA-256。两个组件共用的导出渲染资源随任一需要它的组件安装。
 
-「安装插件文件」用于数据型主题包。官方模块通过应用安装器或应用更新交付，第三方可执行插件由后续隔离运行时接入。
+Windows 安装器在 `extendown-components/available/` 放置压缩的官方组件资源。补装时，Rust 按当前版本的内置清单校验并恢复资源，写入所选组件，再向各窗口广播更新。「安装插件文件」用于导入数据型主题和命令插件包。
 
 ### 主题包
 

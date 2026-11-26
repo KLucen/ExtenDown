@@ -20,6 +20,7 @@ fn main() {
             "set_default_markdown_app",
             "save_export",
             "installed_components",
+            "install_official_component",
             "choose_workspace",
             "close_workspace",
             "workspace_list",

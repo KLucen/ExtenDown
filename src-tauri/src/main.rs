@@ -594,6 +594,7 @@ fn main() {
             set_default_markdown_app,
             export::save_export,
             components::installed_components,
+            components::install_official_component,
             workspace::choose_workspace,
             workspace::close_workspace,
             workspace::workspace_list,

@@ -32,6 +32,16 @@ test('preview text treats markup typed into a paragraph as plain text', () => {
   assert.equal(apply(source, formula), '原样显示 \\$x\\$\r\n\r\n另一段\r\n');
 });
 
+test('preview starts the first paragraph in empty documents, preserving a BOM', () => {
+  for (const source of ['', '\uFEFF']) {
+    const patch = buildPreviewTextPatch(source, 0, '', '新的 **段落**', false);
+    assert.ok(patch);
+    assert.equal(apply(source, patch), source + '新的 \\*\\*段落\\*\\*');
+    assert.equal(buildPreviewTextPatch(source, 0, '', '多行\n正文', false), null);
+  }
+  assert.equal(buildPreviewTextPatch('已有段落', 0, '', '覆盖', false), null);
+});
+
 test('preview formatting joins native text and the shared formatting command in one patch', () => {
   const source = '\uFEFF# 章节\r\n\r\n旧文本\r\n';
   const paragraph = [...collectPreviewEdits(source, false).text.keys()][1];

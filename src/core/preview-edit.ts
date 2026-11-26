@@ -109,17 +109,23 @@ export function collectPreviewEdits(source: string | MarkdownSnapshot, math = fa
 export function buildPreviewTextPatch(source: string, blockStart: number, previous: string, next: string, math: boolean): PreviewSourcePatch | null {
   const bomOffset = source.startsWith('\uFEFF') ? 1 : 0;
   const bomBytes = bomOffset ? 3 : 0;
-  const range = { blockStart, sourceText: previous, replacement: next };
-  const direct = applyReaderMappedTextEdit(source, bomBytes, range);
-  if (!direct.ok) return null;
   const matchesVisibleText = (content: string) => {
     if (next === '') return true;
     const snapshot = parseMarkdownSnapshot(content, { math });
     const block = selectionMapFromSnapshot(snapshot, bomBytes).blocks.find(candidate => candidate.blockStart === blockStart);
     return block?.supported && block.visibleText === next;
   };
+  const escaped = () => math ? escapeReaderPlainText(next).replace(/\$/gu, '\\$') : escapeReaderPlainText(next);
+  if (blockStart === 0 && previous === '' && source.length === bomOffset) {
+    if (/[\r\n\uD800-\uDFFF]/u.test(next)) return null;
+    const insert = escaped();
+    return matchesVisibleText(source + insert) ? { from: bomOffset, to: bomOffset, expected: '', insert } : null;
+  }
+  const range = { blockStart, sourceText: previous, replacement: next };
+  const direct = applyReaderMappedTextEdit(source, bomBytes, range);
+  if (!direct.ok) return null;
   const edit = matchesVisibleText(direct.content) ? direct : applyReaderPlainTextEdit(source, bomBytes, {
-    ...range, replacement: math ? escapeReaderPlainText(next).replace(/\$/gu, '\\$') : escapeReaderPlainText(next),
+    ...range, replacement: escaped(),
   });
   if (!edit.ok || !matchesVisibleText(edit.content)) return null;
   const from = edit.sourceStart + bomOffset;

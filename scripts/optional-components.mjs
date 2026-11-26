@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import { COMPONENT_CATEGORIES, COMPONENT_PRESETS, OFFICIAL_COMPONENTS } from '../src/core/plugins/component-catalog.ts';
 
 const output = fileURLToPath(new URL('../src-tauri/target/optional-components/', import.meta.url));
@@ -70,6 +71,13 @@ function nsisInventory(assets) {
   return lines.join('\n');
 }
 
+function clearGeneratedFiles(folder) {
+  mkdirSync(folder, { recursive: true });
+  for (const entry of readdirSync(folder, { withFileTypes: true })) {
+    if (entry.isFile()) unlinkSync(resolve(folder, entry.name));
+  }
+}
+
 // Preserve Rollup's URLs while moving selected code out of Tauri's embedded
 // frontend. The Windows host serves these files using the embedded manifest.
 export function optionalComponents() {
@@ -114,17 +122,16 @@ export function optionalComponents() {
           owners.get(file).push(group);
         }
       }
-      const assetFolder = resolve(output, 'assets');
-      mkdirSync(assetFolder, { recursive: true });
-      for (const entry of readdirSync(assetFolder, { withFileTypes: true })) {
-        if (entry.isFile()) unlinkSync(resolve(assetFolder, entry.name));
-      }
+      clearGeneratedFiles(resolve(output, 'assets'));
+      const availableFolder = resolve(output, 'available');
+      clearGeneratedFiles(availableFolder);
       const assets = {};
       for (const [file, components] of [...owners.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const item = bundle[file];
         const contents = item.type === 'chunk' ? item.code : item.source;
         assets[file] = { sha256: createHash('sha256').update(contents).digest('hex'), components };
         writeFileSync(resolve(output, file), contents);
+        writeFileSync(resolve(availableFolder, file.slice('assets/'.length) + '.gz'), gzipSync(contents, { level: 9 }));
         delete bundle[file];
       }
       writeFileSync(resolve(output, 'component-files.nsh'), nsisInventory(assets));
@@ -136,10 +143,12 @@ export function optionalComponents() {
     },
     writeBundle() {
       if (!active) return;
-      const folder = resolve(portable, 'assets');
-      mkdirSync(folder, { recursive: true });
-      for (const entry of readdirSync(resolve(output, 'assets'))) {
-        writeFileSync(resolve(folder, entry), readFileSync(resolve(output, 'assets', entry)));
+      for (const directory of ['assets', 'available']) {
+        const folder = resolve(portable, directory);
+        clearGeneratedFiles(folder);
+        for (const entry of readdirSync(resolve(output, directory))) {
+          writeFileSync(resolve(folder, entry), readFileSync(resolve(output, directory, entry)));
+        }
       }
       writeFileSync(resolve(portable, 'selection.ini'), '[components]\n' +
         Object.keys(groups).map(group => group + '=1\n').join(''));

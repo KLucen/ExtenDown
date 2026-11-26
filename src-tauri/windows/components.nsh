@@ -16,9 +16,13 @@ Var componentsInitialized
 
 !macro ExtendownLoadChoice group
   ClearErrors
-  ReadRegDWORD $pick_${group} SHCTX "${EXTENDOWN_INSTALL_CHOICES}" "${group}"
+  ReadINIStr $pick_${group} "$INSTDIR\extendown-components\selection.ini" "components" "${group}"
   ${If} ${Errors}
-    StrCpy $pick_${group} 1
+    ClearErrors
+    ReadRegDWORD $pick_${group} SHCTX "${EXTENDOWN_INSTALL_CHOICES}" "${group}"
+    ${If} ${Errors}
+      StrCpy $pick_${group} 1
+    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -103,6 +107,8 @@ FunctionEnd
   Call ExtendownLoadChoices
   !insertmacro ExtendownRemoveComponents
   CreateDirectory "$INSTDIR\extendown-components"
+  SetOutPath "$INSTDIR\extendown-components\available"
+  File "${EXTENDOWN_FILES}\available\*.gz"
   !insertmacro EXTENDOWN_COMPONENT_FILES
   !insertmacro EXTENDOWN_COMPONENT_SAVE
   SetOutPath "$INSTDIR"
@@ -116,6 +122,8 @@ FunctionEnd
   Delete "$INSTDIR\extendown-components\assets\*.woff2"
   Delete "$INSTDIR\extendown-components\assets\*.png"
   Delete "$INSTDIR\extendown-components\assets\*.svg"
+  Delete "$INSTDIR\extendown-components\available\*.gz"
+  RMDir "$INSTDIR\extendown-components\available"
   RMDir "$INSTDIR\extendown-components\assets"
   RMDir "$INSTDIR\extendown-components"
 !macroend

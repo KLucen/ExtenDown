@@ -8,6 +8,7 @@ interface ReaderEditableBlockProps {
   readonly blockStart: number;
   readonly sourceText: string;
   readonly enabled: boolean;
+  readonly initialCaret?: number;
   readonly onCommit: (blockStart: number, sourceText: string, text: string) => Promise<boolean>;
   readonly onDraftChange: (dirty: boolean) => void;
   readonly onActivityChange: (kind: 'composing' | 'committing', active: boolean) => void;
@@ -47,6 +48,7 @@ export function ReaderEditableBlock({
   blockStart,
   sourceText,
   enabled,
+  initialCaret,
   onCommit,
   onDraftChange,
   onActivityChange,
@@ -73,6 +75,18 @@ export function ReaderEditableBlock({
   const callbacks = useRef({ onCommit, onDraftChange, onRestricted, onFinish });
   callbacks.current = { onCommit, onDraftChange, onRestricted, onFinish };
   const caret = useRef<Range | null>(null);
+  const captureSelection = () => {
+    const element = elementRef.current;
+    const selection = window.getSelection();
+    if (!element || !selection || selection.rangeCount !== 1) return null;
+    const range = selection.getRangeAt(0);
+    if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return null;
+    return range.cloneRange();
+  };
+  const captureCaretAtPoint = (event: React.MouseEvent<HTMLElement>) => {
+    const point = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+    return point && elementRef.current?.contains(point.startContainer) ? point : captureSelection();
+  };
   useLayoutEffect(() => {
     const previous = sourceIdentityRef.current;
     const replaced = previous.documentKey !== documentKey || previous.as !== as ||
@@ -107,11 +121,16 @@ export function ReaderEditableBlock({
     });
     sessionRef.current = session;
     const element = elementRef.current;
-    if (onStart && element && document.activeElement !== element) {
-      element.focus({ preventScroll: true });
+    if (onStart && element) {
+      if (document.activeElement !== element) element.focus({ preventScroll: true });
       const selection = window.getSelection();
-      const range = caret.current;
-      if (range && element.contains(range.startContainer)) {
+      let range = caret.current;
+      if (initialCaret !== undefined && element.firstChild instanceof Text) {
+        range = element.ownerDocument.createRange();
+        range.setStart(element.firstChild, Math.min(initialCaret, element.firstChild.length));
+        range.collapse(true);
+      }
+      if (range && element.contains(range.startContainer) && element.contains(range.endContainer)) {
         selection?.removeAllRanges();
         selection?.addRange(range);
       } else {
@@ -128,7 +147,7 @@ export function ReaderEditableBlock({
       session.dispose();
       if (sessionRef.current === session) sessionRef.current = null;
     };
-  }, [documentKey, as, blockStart, sourceText, enabled, id, onActivityChange, Boolean(onStart)]);
+  }, [documentKey, as, blockStart, sourceText, enabled, initialCaret, id, onActivityChange, Boolean(onStart)]);
 
   const handlePaste = (event: ClipboardEvent<HTMLElement>) => {
     event.preventDefault();
@@ -172,6 +191,7 @@ export function ReaderEditableBlock({
     key: restoreVersion,
     ref: (element: HTMLElement | null) => { elementRef.current = element; },
     id: headingId ?? id,
+    'aria-label': sourceText === '' ? '文档正文' : undefined,
     'aria-labelledby': headingId,
     tabIndex,
     className: [className, (enabled || onStart) ? 'reader-editable-block' : undefined].filter(Boolean).join(' ') || undefined,
@@ -179,9 +199,20 @@ export function ReaderEditableBlock({
     suppressContentEditableWarning: true,
     'data-reader-editable': enabled ? 'true' : undefined,
     'data-source-block-start': blockStart,
-    'aria-description': enabled ? '按 Ctrl+Enter 应用修改，按 Escape 取消' : onStart ? '双击或按 Enter 编辑正文' : undefined,
-    onDoubleClick: !enabled && onStart ? (event: React.MouseEvent<HTMLElement>) => {
-      caret.current = document.caretRangeFromPoint(event.clientX, event.clientY);
+    'aria-description': enabled ? '按 Ctrl+Enter 应用修改，按 Escape 取消' : onStart ? '点击文字或按 Enter 开始编辑' : undefined,
+    onClick: !enabled && onStart ? (event: React.MouseEvent<HTMLElement>) => {
+      // A drag selection remains a normal reading selection. A single click
+      // with a collapsed caret enters editing at the point the user clicked.
+      if (event.detail !== 1 || event.defaultPrevented) return;
+      if (window.getSelection()?.isCollapsed === false) return;
+      caret.current = captureCaretAtPoint(event);
+      onStart();
+    } : undefined,
+    onDoubleClick: !enabled && onStart ? () => {
+      // The first click has already activated the block. If activation was
+      // suppressed by a non-collapsed selection, preserve the browser's word
+      // selection from the double-click before enabling contenteditable.
+      caret.current = captureSelection() ?? caret.current;
       onStart();
     } : undefined,
     onFocus: enabled ? () => sessionRef.current?.focus() : undefined,

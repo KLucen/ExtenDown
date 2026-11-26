@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PluginRegistry, builtinExporterModules, builtinExtraLanguagesModule, builtinMathModule, builtinMermaidModule,
@@ -16,7 +17,7 @@ import {
 import { permissionDescriptions, type useScriptPlugins } from './script-commands';
 import { ShortcutSettings, type useShortcuts } from './commands';
 import type { EditorCommand } from '../core/editor-commands';
-import { COMPONENT_CATEGORIES, COMPONENT_PRESETS, EXTENSION_STATE_LABELS, OFFICIAL_COMPONENTS, matchesComponent,
+import { COMPONENT_CATEGORIES, EXTENSION_STATE_LABELS, OFFICIAL_COMPONENTS, matchesComponent,
   type ComponentId, type ComponentCategory, type ExtensionState } from '../core/plugins/component-catalog.ts';
 
 const STORE_KEY = 'extendown.extensions.v1';
@@ -26,12 +27,9 @@ type Component = ComponentId;
 const FULL_COMPONENTS = new Set<Component>(COMPONENTS);
 const NO_COMPONENTS = new Set<Component>();
 const OFFICIAL_THEME_ID = 'org.extendown.theme.midnight';
-let componentRequest: Promise<ReadonlySet<Component>> | undefined;
-
-function queryComponents(): Promise<ReadonlySet<Component>> {
-  return componentRequest ??= invoke<string[] | null>('installed_components').then(
-    installed => installed === null ? FULL_COMPONENTS : new Set(COMPONENTS.filter(choice => installed.includes(choice))),
-  );
+function mergeComponents(previous: ReadonlySet<Component> | null, installed: string[] | null): ReadonlySet<Component> {
+  if (installed === null) return FULL_COMPONENTS;
+  return new Set(COMPONENTS.filter(id => previous?.has(id) || installed.includes(id)));
 }
 
 const LOADERS = {
@@ -51,7 +49,6 @@ const DARK_THEME: ThemeContribution = {
 type ThemePackage = ThemePlugin;
 
 interface Preferences {
-  configured: boolean;
   math: boolean;
   mermaid: boolean;
   languages: boolean;
@@ -63,7 +60,7 @@ interface Preferences {
 }
 
 const DEFAULTS: Preferences = {
-  configured: false, math: true, mermaid: true, languages: true, presentation: true,
+  math: true, mermaid: true, languages: true, presentation: true,
   formats: [...FORMATS], theme: 'core.light', packages: [], disabledThemes: [],
 };
 
@@ -78,7 +75,6 @@ function readPreferences(): Preferences {
       }
     }
     return {
-      configured: stored.configured === true,
       math: stored.math !== false,
       mermaid: stored.mermaid !== false,
       languages: stored.languages !== false,
@@ -109,14 +105,29 @@ export function useExtensions() {
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
-    void queryComponents().then(result => { if (active) setInstalled(result); }, () => {
+    const subscription = listen<string[]>('official-components-changed', ({ payload }) => {
+      if (active) setInstalled(previous => mergeComponents(previous, payload));
+    }).catch(() => undefined);
+    void subscription.then(() => invoke<string[] | null>('installed_components')).then(result => {
+      if (active) setInstalled(previous => mergeComponents(previous, result));
+    }, () => {
       if (active) {
-        setInstalled(NO_COMPONENTS);
+        setInstalled(previous => previous ?? NO_COMPONENTS);
         setExtensionError('无法读取桌面版已安装组件。');
       }
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      void subscription.then(unlisten => unlisten?.());
+    };
   }, []);
+
+  async function installComponent(id: Component) {
+    const result = await invoke<string[]>('install_official_component', { componentId: id });
+    if (!result.includes(id)) throw new Error('无法确认组件已安装。');
+    setInstalled(previous => mergeComponents(previous, result));
+    setExtensionError('');
+  }
 
   useEffect(() => {
     let active = true;
@@ -199,7 +210,7 @@ export function useExtensions() {
   return {
     preferences, update, registry, themes, style, dark: selectedTheme?.id === DARK_THEME.id || selectedTheme?.id === 'org.extendown.theme.midnight',
     markdown, formats, focusAvailable, components, extensionError, componentsReady: installed !== null,
-    install,
+    install, installComponent,
   };
 }
 
@@ -232,77 +243,48 @@ interface PluginFilter {
   state: 'all' | Exclude<ExtensionState, 'loading'>;
 }
 
-function Components({ plugins, filter, onDone }: { plugins: Extensions; filter?: PluginFilter; onDone?: () => void }) {
-  const prefs = plugins.preferences;
+function Components({ plugins, filter, desktop, installingComponent, onInstall }: {
+  plugins: Extensions;
+  filter: PluginFilter;
+  desktop: boolean;
+  installingComponent: Component | null;
+  onInstall: (id: Component) => void;
+}) {
   const choices = OFFICIAL_COMPONENTS.flatMap(item => {
-    const formats: readonly (ExportFormat | undefined)[] = item.id === 'images' && !onDone ? ['png', 'jpg'] : [undefined];
+    const installed = plugins.components.has(item.id);
+    const formats: readonly (ExportFormat | undefined)[] = item.id === 'images' && installed ? ['png', 'jpg'] : [undefined];
     return formats.map(format => {
-      const installed = plugins.components.has(item.id);
-      const enabled = officialEnabled(prefs, item.id, format ?? (item.id === 'html' || item.id === 'pdf' ? item.id : undefined));
+      const enabled = officialEnabled(plugins.preferences, item.id, format ?? (item.id === 'html' || item.id === 'pdf' ? item.id : undefined));
       const state: ExtensionState = !plugins.componentsReady ? 'loading' : !installed ? 'missing' : enabled ? 'enabled' : 'disabled';
       const label = format ? format.toUpperCase() + ' 导出' : item.name;
       return { ...item, format, label, installed, enabled, state };
     });
-  }).filter(item => onDone
-    ? item.installed : !filter || (filter.category === 'all' || item.category === filter.category) &&
-      (filter.state === 'all' || filter.state === item.state) &&
-      matchesComponent(filter.query, item.label, item.name, item.aliases, item.id, item.description));
-  function applyPreset(preset: keyof typeof COMPONENT_PRESETS) {
-    const selected = COMPONENT_PRESETS[preset];
-    const changed = OFFICIAL_COMPONENTS.filter(item => {
-      if (!plugins.components.has(item.id)) return false;
-      const enabled = selected.includes(item.id);
-      if (item.id === 'images') return (['png', 'jpg'] as const).some(format => prefs.formats.includes(format) !== enabled);
-      return officialEnabled(prefs, item.id, item.id === 'html' || item.id === 'pdf' ? item.id : undefined) !== enabled;
-    });
-    if (!changed.length) return;
-    const name = preset === 'minimal' ? '精简' : '推荐';
-    const changes = changed.map(item => item.name + (selected.includes(item.id) ? '启用' : '停用')).join('、');
-    if (window.confirm('应用「' + name + '」配置？\n\n' + changes)) {
-      plugins.update(state => changed.reduce((previous, item) => toggleOfficial(previous, item.id, selected.includes(item.id)), state));
-    }
-  }
+  }).filter(item => (filter.category === 'all' || item.category === filter.category) &&
+    (filter.state === 'all' || filter.state === item.state) &&
+    matchesComponent(filter.query, item.label, item.name, item.aliases, item.id, item.description));
 
   return <>
-    {onDone && <div className="dialog-actions">
-      <button type="button" className="setting-action" disabled={!plugins.componentsReady} onClick={() => applyPreset('minimal')}>精简</button>
-      <button type="button" className="setting-action" disabled={!plugins.componentsReady} onClick={() => applyPreset('recommended')}>推荐</button>
-      <small>可单独勾选以自定义。</small>
-    </div>}
     {Object.entries(COMPONENT_CATEGORIES).map(([category, name]) => {
       const items = choices.filter(item => item.category === category);
-      return items.length > 0 && <fieldset className="component-options component-group" key={category}>
+      return items.length > 0 && <fieldset className="component-options" key={category}>
         <legend>{name}</legend>
-        {items.map(item => <label className="component-choice" key={item.format ?? item.id}>
-          <input type="checkbox" checked={item.installed && item.enabled} disabled={!item.installed} onChange={event => {
-            const checked = event.target.checked;
-            plugins.update(state => toggleOfficial(state, item.id, checked, item.format));
-          }} />
-          <span><strong>{item.label}</strong> <small>{EXTENSION_STATE_LABELS[item.state]}</small><small>{item.description}</small></span>
-        </label>)}
+        {items.map(item => <div className="component-choice" key={item.format ?? item.id}>
+          <label>
+            {item.installed && <input type="checkbox" checked={item.enabled} onChange={event => {
+              const enabled = event.target.checked;
+              plugins.update(state => toggleOfficial(state, item.id, enabled, item.format));
+            }} />}
+            <span><strong>{item.label}</strong> <small>{EXTENSION_STATE_LABELS[item.state]}</small><small>{item.description}</small></span>
+          </label>
+          {desktop && item.state === 'missing' && <button type="button" className="setting-action" disabled={installingComponent !== null}
+            aria-label={'补装 ' + item.label} onClick={() => onInstall(item.id)}>
+            {installingComponent === item.id ? '正在补装…' : '补装'}
+          </button>}
+        </div>)}
       </fieldset>;
     })}
-    {!onDone && choices.some(item => item.state === 'missing') && <small>可重新运行 Windows 安装器补装缺少的官方组件。</small>}
     {plugins.extensionError && <p className="error" role="alert">{plugins.extensionError}</p>}
-    {onDone && <button type="button" className="setting-action" disabled={!plugins.componentsReady} onClick={onDone}>开始使用</button>}
   </>;
-}
-
-export function FirstRun({ plugins, onClose }: { plugins: Extensions; onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { dialog.current?.showModal(); }, []);
-  function finish() {
-    plugins.update(state => ({ ...state, configured: true }));
-    dialog.current?.close();
-  }
-  return <dialog className="settings-modal first-run-modal" ref={dialog} aria-labelledby="components-title" onClose={onClose}
-    onCancel={event => { event.preventDefault(); finish(); }}>
-    <div className="modal-head"><h2 id="components-title">选择扩展</h2></div>
-    <div className="settings-section">
-      <p>可在设置中调整这些选项。</p>
-      <Components plugins={plugins} onDone={finish} />
-    </div>
-  </dialog>;
 }
 
 export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, onClose, launchDefaults, shortcuts, commands, initialTab = 'general', pluginQuery = '' }: {
@@ -323,9 +305,25 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [packageBusy, setPackageBusy] = useState(false);
+  const [installingComponent, setInstallingComponent] = useState<Component | null>(null);
+  const [componentFeedback, setComponentFeedback] = useState<{ message: string; error?: boolean }>();
   const [tab, setTab] = useState(initialTab);
   const [filter, setFilter] = useState<PluginFilter>({ query: pluginQuery, category: 'all', state: 'all' });
   useEffect(() => { dialog.current?.showModal(); }, []);
+
+  async function installOfficial(id: Component) {
+    const name = OFFICIAL_COMPONENTS.find(component => component.id === id)?.name ?? id;
+    setComponentFeedback(undefined);
+    setInstallingComponent(id);
+    try {
+      await plugins.installComponent(id);
+      setComponentFeedback({ message: `已补装 ${name}。` });
+    } catch (reason) {
+      setComponentFeedback({ message: errorMessage(reason, `无法补装 ${name}。`), error: true });
+    } finally {
+      setInstallingComponent(null);
+    }
+  }
 
   async function install(buffer: ArrayBuffer) {
     setStatus('');
@@ -473,7 +471,11 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
           {(['enabled', 'disabled', 'missing'] as const).map(state => <option key={state} value={state}>{EXTENSION_STATE_LABELS[state]}</option>)}
         </select>
       </div>
-      <Components plugins={plugins} filter={filter} />
+      {componentFeedback && <p role={componentFeedback.error ? 'alert' : 'status'} className={componentFeedback.error ? 'error' : undefined}>
+        {componentFeedback.message}
+      </p>}
+      <Components plugins={plugins} filter={filter} desktop={desktop} installingComponent={installingComponent}
+        onInstall={id => void installOfficial(id)} />
       {visibleThemes.length > 0 && <h3>本地主题</h3>}
       {visibleThemes.map(item => <div className="plugin-row" key={item.manifest.id}>
         <label><input type="checkbox" checked={!plugins.preferences.disabledThemes.includes(item.manifest.id)}

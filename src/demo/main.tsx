@@ -18,7 +18,7 @@ import { SourceSurface } from '../renderer/source-surface';
 import type { SourceSurfaceHandle } from '../renderer/source-surface';
 import { useDocument } from './document-session';
 import { ScriptCommands, useScriptPlugins, type ScriptRunEntry } from './script-commands';
-import { FirstRun, Settings, useExtensions } from './settings';
+import { Settings, useExtensions } from './settings';
 import { CommandPalette, EditorSearch, useCommandShortcuts, useShortcuts } from './commands';
 import { WorkspacePanel } from './workspace-panel';
 import { ReadingSearch, useSplitScroll } from './preview-navigation';
@@ -160,7 +160,6 @@ function App() {
   const activeMode = focused ? 'preview' : mode;
   useSplitScroll(sourcePane, readingPane, view.key, activeMode === 'split' && syncScroll);
   const writable = !mixed && !pending;
-  const nativeFirstRun = desktop && !pending && !plugins.preferences.configured;
 
   function patchSource(patch: SourcePatch, expectedSource: string) {
     return writable && session.canLeaveInput() && (surface.current?.applyPatch(patch, expectedSource) ?? false);
@@ -240,7 +239,7 @@ function App() {
   }
   const shortcut = (id: EditorCommandId) => shortcutLabel(EDITOR_COMMANDS[id], shortcuts.overrides, shortcuts.mac);
   useCommandShortcuts({
-    commands, shortcuts, blocked: Boolean(settings || exportSnapshot || paletteOpen || scriptCommand !== null || nativeFirstRun),
+    commands, shortcuts, blocked: Boolean(settings || exportSnapshot || paletteOpen || scriptCommand !== null),
     canRun: (event, command) => {
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest('[data-reader-editable="true"]') &&
@@ -423,7 +422,6 @@ function App() {
           key: view.key, revision: session.currentRevision(), source: session.currentSource(), format: view.format,
         }}
         replaceText={value => !pending && !mixed && (surface.current?.replaceText(value) ?? false)} />}
-      {nativeFirstRun && <FirstRun plugins={plugins} onClose={() => undefined} />}
       {exportSnapshot && <ExportDialog snapshot={exportSnapshot} formats={plugins.formats} onClose={() => setExportSnapshot(null)}
         onSaved={result => session.setNotice('已导出 ' + result)} />}
     </div>

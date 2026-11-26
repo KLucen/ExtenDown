@@ -54,14 +54,27 @@ export interface PreviewEditing extends PreviewVersion {
 
 interface ActiveText extends PreviewVersion {
   readonly offset: number;
+  readonly initialCaret?: number;
   readonly source: string;
   readonly reading: ReadingOptions;
+}
+
+interface PreviewTextPress {
+  readonly pointerId: number;
+  readonly x: number;
+  readonly y: number;
+  readonly documentKey: string;
+  readonly text: string;
+  readonly caret: number;
+  readonly activeOffset: number;
+  offset: number;
+  source: string;
+  released: boolean;
 }
 
 interface PreviewEditControls {
   readonly documentKey: string;
   readonly revision: number;
-  readonly visible: boolean;
   readonly ready: boolean;
   readonly activeText: ActiveText | null;
   readonly canFormat: () => boolean;
@@ -112,7 +125,7 @@ function PreviewText({ as, offset, text, children, ...props }: HeadingProps & {
       window.removeEventListener('resize', update);
     };
   }, [active, offset]);
-  const available = controls && controls.visible && offset !== undefined && text !== undefined;
+  const available = controls && offset !== undefined && text !== undefined;
   if (!available) {
     const Tag = as;
     return <Tag {...props}>{children}</Tag>;
@@ -131,7 +144,8 @@ function PreviewText({ as, offset, text, children, ...props }: HeadingProps & {
     }
   };
   return <><ReaderEditableBlock as={as} blockStart={offset} documentKey={controls.documentKey}
-    enabled={active} sourceText={text} id={props.id} className={props.className} tabIndex={0}
+    enabled={active} initialCaret={active ? controls.activeText?.initialCaret : undefined}
+    sourceText={text} id={props.id} className={props.className} tabIndex={0}
     onCommit={controls.commitText} onDraftChange={controls.setDraft} onActivityChange={controls.setActivity}
     onRestricted={controls.report} onFinish={() => controls.finishText(offset)}
     onCancel={() => controls.focusBlock(offset)}
@@ -165,7 +179,7 @@ function PreviewText({ as, offset, text, children, ...props }: HeadingProps & {
 function PreviewTask({ checked }: { readonly checked?: boolean }) {
   const controls = useContext(PreviewEditContext);
   const patch = useContext(TaskSpanContext);
-  const editable = controls?.visible && controls.ready && patch;
+  const editable = controls?.ready && patch;
   return <input type="checkbox" checked={Boolean(checked)} disabled={!editable}
     aria-label="任务完成状态" onChange={() => {
       if (editable) controls.apply(patch, { documentKey: controls.documentKey, revision: controls.revision });
@@ -179,7 +193,7 @@ function PreviewBlockActions({ span, label, inline = false, table }: {
   readonly table?: EditablePreviewTable;
 }) {
   const controls = useContext(PreviewEditContext);
-  if (!controls?.visible) return null;
+  if (!controls) return null;
   return <span className="preview-block-actions" data-inline={inline}>
     {table && <button type="button" disabled={!controls.ready} onClick={() => controls.openTable(table)}>编辑表格</button>}
     <button type="button" disabled={!controls.ready} onClick={() => controls.openSource(span)}>{label}</button>
@@ -262,7 +276,6 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
   readonly resolveImage?: ImageResolver;
   readonly editing?: PreviewEditing;
 }) {
-  const [editMode, setEditMode] = useState(false);
   const [activeText, setActiveText] = useState<ActiveText | null>(null);
   const [activeTable, setActiveTable] = useState<{ table: EditablePreviewTable; version: PreviewVersion }>();
   const [feedback, setFeedback] = useState<{ reason: string; draft?: string }>();
@@ -275,7 +288,8 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
   const math = hasMathExtension({ extensions: activeExtensions });
   const projection = useMemo(() => buildPreviewProjection(activeSource, { extensions: activeExtensions, highlightCode: activeHighlight }),
     [activeSource, activeExtensions, activeHighlight]);
-  const edits = useMemo(() => editMode ? collectPreviewEdits(projection.snapshot) : undefined, [projection.snapshot, editMode]);
+  const editable = Boolean(editing?.writable);
+  const edits = useMemo(() => editable ? collectPreviewEdits(projection.snapshot) : undefined, [projection.snapshot, editable]);
   const markdownCode = useMemo(() => {
     const entries = new Map<number, { language?: string; value: string }>();
     function collect(node: import('mdast').Nodes) {
@@ -291,6 +305,7 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
   const previewId = useId();
   const article = useRef<HTMLElement>(null);
   const restoreFocus = useRef<number | undefined>(undefined);
+  const textPress = useRef<PreviewTextPress | null>(null);
   useLayoutEffect(() => {
     if (activeText || restoreFocus.current === undefined) return;
     const offset = restoreFocus.current;
@@ -309,25 +324,49 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
     for (const kind of activity.current) setActivity(kind, false);
   }, [setActivity]);
   const setDraft = useCallback((dirty: boolean) => setActivity('draft', dirty), [setActivity]);
-  const report = useCallback((_offset: number, reason: string, draft?: string) => setFeedback({ reason, draft }), []);
+  const report = useCallback((_offset: number, reason: string, draft?: string) => {
+    if (draft !== undefined) textPress.current = null;
+    setFeedback({ reason, draft });
+  }, []);
   const apply = (patch: PreviewPatch, version: PreviewVersion) => authority.current?.onEdit({
     ...patch, documentKey: version.documentKey, revision: version.revision,
   }) ?? false;
   const ready = Boolean(editing?.writable && editing.current && !activeText && !activeTable);
-  const controls: PreviewEditControls | null = editing ? {
-    documentKey: editing.documentKey, revision: editing.revision, visible: editMode, ready, activeText, math, shortcuts: editing.shortcuts,
+  const startText = (offset: number, initialCaret?: number) => {
+    if (!editing || !ready) return;
+    setFeedback(undefined);
+    setActiveText({ offset, initialCaret, source, documentKey: editing.documentKey, revision: editing.revision,
+      reading: { extensions, highlightCode } });
+  };
+  const startPressedText = () => {
+    const press = textPress.current;
+    if (!ready || !press?.released) return;
+    textPress.current = null;
+    if (press.documentKey === editing?.documentKey && press.source === source && edits?.text.get(press.offset) === press.text) {
+      startText(press.offset, press.caret);
+    }
+  };
+  useLayoutEffect(startPressedText);
+  const controls: PreviewEditControls | null = editing?.writable ? {
+    documentKey: editing.documentKey, revision: editing.revision, ready, activeText, math, shortcuts: editing.shortcuts,
     canFormat: () => !activity.current.has('composing') && !activity.current.has('committing'),
     focusBlock: offset => { restoreFocus.current = offset; },
-    startText: offset => {
-      if (!ready) return;
-      setFeedback(undefined);
-      setActiveText({ offset, source, documentKey: editing.documentKey, revision: editing.revision, reading: { extensions, highlightCode } });
-    },
+    startText,
     finishText: offset => setActiveText(edit => edit?.offset === offset ? null : edit),
     commitText: async (offset, previous, next) => {
       if (activeText?.offset !== offset) return false;
       const patch = buildPreviewTextPatch(activeText.source, offset, previous, next, math);
-      return patch !== null && apply(patch, activeText);
+      if (!patch || !apply(patch, activeText)) return false;
+      const press = textPress.current;
+      if (press?.documentKey === activeText.documentKey && press.source === activeText.source && press.activeOffset === offset) {
+        // Blurring the old block refreshes the preview before the click may finish.
+        // Carry the new block's caret to its corresponding position in the new source.
+        if (press.offset + Number(press.source.startsWith('\uFEFF')) >= patch.to) {
+          press.offset += patch.insert.length - (patch.to - patch.from);
+        }
+        press.source = press.source.slice(0, patch.from) + patch.insert + press.source.slice(patch.to);
+      }
+      return true;
     },
     setDraft, setActivity, report,
     apply,
@@ -431,21 +470,44 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
 
   return <>
     <style>{READING_EXTENSION_CSS}</style>
-    {editing && <div className="preview-edit-tools">
-      <button type="button" aria-pressed={editMode} disabled={!editing.writable || !!activeText || !!activeTable}
-        title={editing.writable ? undefined : '当前文档为只读'}
-        onClick={() => { setEditMode(!editMode); setFeedback(undefined); }}>{editMode ? '结束编辑' : '编辑正文'}</button>
-      {editMode && editing.onInsert && <details className="preview-insert">
+    {editing?.writable && editing.onInsert && <div className="preview-edit-tools">
+      <details className="preview-insert">
         <summary>插入</summary>
         <div>
           <button type="button" disabled={!ready} onClick={() => editing.onInsert?.('insert.table')}>表格</button>
           <button type="button" disabled={!ready} onClick={() => editing.onInsert?.('insert.math')}>数学公式</button>
           <button type="button" disabled={!ready} onClick={() => editing.onInsert?.('insert.mermaid')}>Mermaid 图表</button>
         </div>
-      </details>}
+      </details>
     </div>}
-    <article className="markdown-body" aria-label="Markdown 阅读预览" ref={article}>
-      {editMode && <p className="preview-note preview-edit-help">双击段落或标题可编辑。按 Ctrl+Enter 应用，复杂语法可切换到源码编辑。</p>}
+    <article className="markdown-body" aria-label="Markdown 阅读预览" ref={article}
+      onPointerDownCapture={event => {
+        textPress.current = null;
+        if (!event.isPrimary || event.button !== 0 || !activeText || !(event.target instanceof Element)) return;
+        const block = event.target.closest<HTMLElement>('[data-source-block-start]:not([data-reader-editable])');
+        if (!block || !event.currentTarget.contains(block)) return;
+        const offset = Number(block.dataset.sourceBlockStart);
+        const text = edits?.text.get(offset);
+        const range = block.ownerDocument.caretRangeFromPoint?.(event.clientX, event.clientY);
+        if (text === undefined) return;
+        const caret = range?.startContainer === block.firstChild ? range.startOffset
+          : range?.startContainer === block && range.startOffset === 0 ? 0 : text.length;
+        textPress.current = { documentKey: activeText.documentKey, source: activeText.source, activeOffset: activeText.offset,
+          offset, text, caret, pointerId: event.pointerId, x: event.clientX, y: event.clientY, released: false };
+      }}
+      onPointerUpCapture={event => {
+        const press = textPress.current;
+        if (press?.pointerId !== event.pointerId) return;
+        if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) {
+          textPress.current = null;
+          return;
+        }
+        press.released = true;
+        startPressedText();
+      }}
+      onPointerCancel={event => {
+        if (textPress.current?.pointerId === event.pointerId) textPress.current = null;
+      }}>
       {feedback && <div className="preview-edit-feedback" role="status">
         <p>{feedback.reason}</p>
         {feedback.draft !== undefined && <textarea readOnly aria-label="未应用的正文" value={feedback.draft} />}
@@ -459,6 +521,7 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
         <pre tabIndex={0} aria-label="YAML 元数据"><code>{frontmatter.value}</code></pre>
       </details>}
       <PreviewEditContext.Provider value={controls}>
+        {editable && projection.snapshot.body.length === 0 && <PreviewText as="p" offset={0} text="" className="reader-empty-block" />}
         <ReaderMarkdown tree={projection.renderTree} components={components} />
       </PreviewEditContext.Provider>
     </article>

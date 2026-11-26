@@ -1,6 +1,6 @@
 # Markdown Editor · Tauri 复用包
 
-这是从 MerMarkd 提取的 Markdown 阅读与源码编辑起点。示例提供源码、预览和分屏三种显示方式，各视图共用同一份 Markdown 缓冲区。复用范围限阅读和编辑，卡片、画布、批注侧车和 Electron 外壳均未纳入。代码位于 `src/`，接入步骤和后续开发顺序见 [Tauri 接入指南](docs/TAURI-GUIDE.zh-CN.md)。
+这是从 MerMarkd 提取的 Markdown 阅读与源码编辑起点。示例提供源码、预览和分屏三种显示方式，各视图共用同一份 Markdown 缓冲区。复用范围限阅读和编辑，卡片、画布、批注侧车和 Electron 外壳均未纳入。代码位于 `src/`，产品范围和插件生态见 [首版设计方案](docs/INITIAL_DESIGN.zh-CN.md)，桌面接入步骤见 [Tauri 接入指南](docs/TAURI-GUIDE.zh-CN.md)。
 
 ## 先在浏览器体验
 

@@ -20,6 +20,15 @@
 
 !macro NSIS_HOOK_POSTUNINSTALL
   !insertmacro ExtendownRemoveComponents
+  RMDir "$INSTDIR"
+  ${If} $UpdateMode <> 1
+    ReadRegStr $0 SHCTX "${MANUPRODUCTKEY}" ""
+    ${If} $0 == $INSTDIR
+      DeleteRegValue SHCTX "${MANUPRODUCTKEY}" ""
+      DeleteRegKey /ifempty SHCTX "${MANUPRODUCTKEY}"
+      DeleteRegKey /ifempty SHCTX "${MANUKEY}"
+    ${EndIf}
+  ${EndIf}
   DeleteRegValue SHCTX "Software\RegisteredApplications" "ExtenDown"
   DeleteRegKey SHCTX "${EXTENDOWN_CAPABILITIES}"
   DeleteRegKey /ifempty SHCTX "Software\ExtenDown"

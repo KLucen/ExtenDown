@@ -11,7 +11,7 @@ ExtenDown 是基于 Tauri v2 的本地 Markdown 编辑器。左侧可折叠侧�
 - 同一入口可安装第三方命令插件。核对权限并启用版本后，从顶栏「命令」运行。审阅并应用的文档变更进入撤销历史。[命令插件开发指南](docs/PLUGIN-DEVELOPMENT.zh-CN.md)
 - 从顶栏「导出」生成 HTML、PDF、PNG 或 JPG。HTML 可离线打开，PDF 以图像分页，PNG 和 JPG 可输出单张图或分段图片 ZIP。
 
-Windows 的 NSIS 安装器可选择安装官方导出、语法、视图、语言和主题扩展，并将 ExtenDown 注册为 `.md` 和 `.markdown` 的候选应用。安装后，在「设置 → 常规 → 选择 .md 默认应用」打开 Windows 系统设置，再按扩展名选择 ExtenDown。
+Windows 的 NSIS 安装器默认安装到 `%LOCALAPPDATA%\extendown\app`，可在向导中修改路径。安装器可选择安装官方导出、语法、视图、语言和主题扩展，并将 ExtenDown 注册为 `.md` 和 `.markdown` 的候选应用。安装后，在「设置 → 常规 → 选择 .md 默认应用」打开 Windows 系统设置，再按扩展名选择 ExtenDown。
 
 ## 开发与构建
 

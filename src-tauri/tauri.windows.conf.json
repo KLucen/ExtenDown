@@ -20,6 +20,7 @@
     "fileAssociations": [],
     "windows": {
       "nsis": {
+        "template": "windows/installer.nsi",
         "installerHooks": "windows/file-associations.nsh"
       }
     }

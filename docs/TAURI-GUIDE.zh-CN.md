@@ -26,6 +26,8 @@ npm run tauri -- build --bundles nsis -- --locked
 
 Windows 便携版本由 `extendown.exe` 和同目录的 `extendown-components/` 组成，可一起复制。用 NSIS 安装时，安装器根据组件页的选择复制官方扩展，核心编辑器和原生文件服务始终安装。
 
+Windows 当前用户默认安装到 `%LOCALAPPDATA%\extendown\app`。安装向导可更改目标目录，命令行也支持显式的 `/D=` 路径。升级时沿用仍有有效卸载登记的安装目录。卸载时移除该目录对应的安装路径记录。
+
 ## 窗口与文档
 
 顶栏集中提供文件、查找、目录、专注、导出和设置。左侧的源码、并排和预览按钮切换编辑布局，顶栏左端的按钮负责收起或展开整个侧栏。Windows 桌面版将窗口操作放在同一顶栏右端。

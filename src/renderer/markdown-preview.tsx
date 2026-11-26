@@ -47,7 +47,6 @@ export interface PreviewEditing extends PreviewVersion {
   readonly current: boolean;
   readonly onEdit: (request: PreviewRangeEdit) => boolean;
   readonly onOpenSource: (range: PreviewSourceRange) => boolean;
-  readonly onInsert?: (command: 'insert.table' | 'insert.math' | 'insert.mermaid') => void;
   readonly shortcuts?: ShortcutOverrides;
   readonly onActivityChange: (kind: PreviewActivity, active: boolean) => void;
 }
@@ -470,16 +469,6 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
 
   return <>
     <style>{READING_EXTENSION_CSS}</style>
-    {editing?.writable && editing.onInsert && <div className="preview-edit-tools">
-      <details className="preview-insert">
-        <summary>插入</summary>
-        <div>
-          <button type="button" disabled={!ready} onClick={() => editing.onInsert?.('insert.table')}>表格</button>
-          <button type="button" disabled={!ready} onClick={() => editing.onInsert?.('insert.math')}>数学公式</button>
-          <button type="button" disabled={!ready} onClick={() => editing.onInsert?.('insert.mermaid')}>Mermaid 图表</button>
-        </div>
-      </details>
-    </div>}
     <article className="markdown-body" aria-label="Markdown 阅读预览" ref={article}
       onPointerDownCapture={event => {
         textPress.current = null;

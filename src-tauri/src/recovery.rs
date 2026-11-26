@@ -200,4 +200,30 @@ mod tests {
         assert_eq!(detached.document.source, "# Restored\r\n");
         assert_eq!(fs::read(original).unwrap(), b"external");
     }
+
+    #[test]
+    fn recovers_a_line_ending_conversion_without_content_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("mixed.md");
+        let bytes = b"\xef\xbb\xbf# A\r\nB\n";
+        fs::write(&original, bytes).unwrap();
+        let original = original.canonicalize().unwrap();
+        let mut session = DocumentSession::open(original.clone()).unwrap();
+        let draft = session
+            .normalize_line_endings(crate::document::LineEnding::Crlf, 0)
+            .unwrap();
+        let drafts = directory.path().join("drafts");
+        RecoveryDraft::write(&drafts, &session, "# A\nB\n".into()).unwrap();
+        assert_eq!(fs::read(&original).unwrap(), bytes);
+
+        let mut recovered = RecoveryDraft::read(&drafts, &draft.document_id)
+            .unwrap()
+            .restore(true)
+            .unwrap();
+        assert_eq!(recovered.document.path.as_deref(), Some(original.as_path()));
+        assert_eq!(recovered.document.format, draft.format);
+        assert!(recovered.document.recovered);
+        recovered.save(original.clone(), "# A\nB\n", 0).unwrap();
+        assert_eq!(fs::read(original).unwrap(), b"\xef\xbb\xbf# A\r\nB\r\n");
+    }
 }

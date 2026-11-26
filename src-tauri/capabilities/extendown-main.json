@@ -20,6 +20,7 @@
     "allow-save-markdown",
     "allow-save-markdown-as",
     "allow-reload-markdown",
+    "allow-normalize-markdown-line-endings",
     "allow-write-markdown-draft",
     "allow-clear-markdown-draft",
     "allow-recover-markdown-drafts",

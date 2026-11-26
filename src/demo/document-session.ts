@@ -16,6 +16,7 @@ interface NativeDocument {
   format: MarkdownSourceFormat;
   revision: number;
   recovered?: boolean;
+  formatChanged?: boolean;
   baseSource?: string | null;
 }
 
@@ -29,6 +30,7 @@ export interface RecentDocument { id: string; name: string; path: string }
 export interface RecoveryDraft { id: string; name: string; path: string | null }
 export interface WorkspaceLocation { documentId: string; line: number }
 export type WorkspaceDiskStatus = 'unchanged' | 'changed' | 'missing';
+export type UniformLineEnding = 'lf' | 'crlf';
 
 const EXAMPLE = [
   '# 写下你的想法', '', '在源码区编辑，预览会随草稿更新。', '',
@@ -44,6 +46,8 @@ const ERRORS: Record<string, string> = {
   'invalid-utf8': '文档需要使用 UTF-8 编码。',
   'file-too-large': '文件超过支持的大小。',
   'mixed-line-endings-read-only': '混合换行文档为只读。',
+  'invalid-line-ending': '请选择 LF 或 CRLF 换行格式。',
+  'line-endings-not-mixed': '当前文档已使用统一的换行格式。',
   'save-failed': '无法写入文件，请检查目标是否可写。',
   'read-failed': '无法读取文件。',
   'unsupported-file-type': '请选择 .md、.markdown 或 .txt 文档。',
@@ -95,7 +99,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   const [view, setView] = useState(() => localDocument(desktop ? '未命名.md' : '示例.md', desktop ? '' : EXAMPLE, 0));
   const [source, setSource] = useState(view.initialSource);
   const [selection, setSelection] = useState(START_SELECTION);
-  const [recoveryDirty, setRecoveryDirty] = useState(false);
+  const [draftDirty, setDraftDirty] = useState(false);
   const [pending, setPending] = useState(desktop);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -113,7 +117,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   const protection = useRef({ dirty: false, saving: false });
   const previewInput = useRef(previewInputActive);
   previewInput.current = previewInputActive;
-  const dirty = recoveryDirty || source !== view.initialSource;
+  const dirty = draftDirty || source !== view.initialSource;
   protection.current = { dirty, saving: pending };
 
   function applyOpened(opened: NativeDocument) {
@@ -123,7 +127,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
     editVersion.current += 1;
     setView({ ...opened, key: keyCounter.current, initialSource });
     setSource(normalized);
-    setRecoveryDirty(Boolean(opened.recovered));
+    setDraftDirty(Boolean(opened.recovered || opened.formatChanged));
     setSelection(START_SELECTION);
     setConflict(false);
     lastDiskStatus.current = 'unchanged';
@@ -282,6 +286,22 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
     });
   }
 
+  function normalizeLineEndings(lineEnding: UniformLineEnding) {
+    return perform(async () => {
+      if (view.format.lineEnding !== 'mixed') return;
+      const converted = desktop
+        ? await invoke<NativeDocument>('normalize_markdown_line_endings', {
+          documentId: view.documentId, revision: view.revision, lineEnding,
+        })
+        : { source: editorToMarkdownText(view.source, lineEnding), format: { ...view.format, lineEnding } };
+      editVersion.current += 1;
+      setView(previous => ({ ...previous, ...converted }));
+      setDraftDirty(true);
+      setNotice(`已统一为 ${lineEnding.toUpperCase()}，${desktop ? '保存后写入文件。' : '现在可以编辑或下载副本。'}`);
+      return true;
+    }, '无法统一换行格式。');
+  }
+
   async function save(asCopy = false) {
     await perform(async () => {
       const snapshot = surface.current?.text() ?? source;
@@ -296,7 +316,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
       });
       if (!saved) return;
       setView(previous => ({ ...previous, ...saved, initialSource: markdownToEditorText(saved.source) }));
-      if (editVersion.current === version) setRecoveryDirty(false);
+      if (editVersion.current === version) setDraftDirty(false);
       setConflict(false);
       setNotice('已保存 ' + saved.name);
       await refreshLists();
@@ -352,7 +372,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
 
   return {
     desktop, view, source, selection, setSelection, dirty, pending, notice, setNotice, error, setError, conflict, recent, drafts,
-    canLeaveInput, edit, openBrowserFile, save, perform,
+    canLeaveInput, edit, openBrowserFile, normalizeLineEndings, save, perform,
     openWorkspaceFile, renameWorkspaceEntry, workspaceLocation, noteWorkspaceDiskStatus,
     open: () => replace(() => invoke('open_markdown')),
     newDocument: () => replace(() => desktop ? invoke('new_markdown') : Promise.resolve({

@@ -8,7 +8,7 @@ mod workspace;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use document::{
-    CommandResult, DocumentSession, DocumentStore, OpenedDocument, bounded_read,
+    CommandResult, DocumentSession, DocumentStore, LineEnding, OpenedDocument, bounded_read,
     existing_document_path, publish, save_document_path, supported_path,
 };
 use percent_encoding::percent_decode_str;
@@ -312,6 +312,18 @@ fn reload_markdown(window: WebviewWindow, document_id: String) -> CommandResult<
 }
 
 #[tauri::command]
+fn normalize_markdown_line_endings(
+    window: WebviewWindow,
+    document_id: String,
+    revision: u64,
+    line_ending: LineEnding,
+) -> CommandResult<OpenedDocument> {
+    lock_store(window.app_handle())?
+        .get_mut(window.label(), &document_id)?
+        .normalize_line_endings(line_ending, revision)
+}
+
+#[tauri::command]
 fn write_markdown_draft(
     window: WebviewWindow,
     document_id: String,
@@ -584,6 +596,7 @@ fn main() {
             save_markdown,
             save_markdown_as,
             reload_markdown,
+            normalize_markdown_line_endings,
             write_markdown_draft,
             clear_markdown_draft,
             recover_markdown_drafts,

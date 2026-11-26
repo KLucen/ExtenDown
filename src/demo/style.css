@@ -124,6 +124,13 @@ dialog::backdrop { background: #14221c55; }
 .setting-field select { padding: 4px 8px; }
 .setting-action { justify-self: start; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); color: var(--accent); }
 .setting-action:hover { border-color: var(--accent); }
+.line-ending-options { display: grid; gap: 6px; padding: 0; margin: 4px 0 0; border: 0; }
+.line-ending-options legend { margin-bottom: 6px; font-weight: 600; }
+.line-ending-options label { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
+.line-ending-options label:has(:checked) { border-color: var(--accent); background: var(--surface-soft); }
+.line-ending-options input { accent-color: var(--accent); }
+.line-ending-dialog .dialog-actions { justify-content: flex-end; margin-top: 6px; }
+.line-ending-dialog button[type="submit"] { background: var(--accent); color: var(--surface); }
 .component-options { display: grid; gap: 6px; padding: 8px 10px 12px; margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 5px; }
 .plugin-filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .plugin-filters input { flex: 1 1 12rem; min-width: 0; }
@@ -149,9 +156,7 @@ dialog::backdrop { background: #14221c55; }
 .script-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .script-run-history { overflow-wrap: anywhere; }
 .script-run-history ul { max-height: 8rem; overflow: auto; margin: 6px 0 0; padding-inline-start: 1.5em; }
-.export-dialog { width: min(calc(100% - 24px), 880px); max-height: calc(100% - 24px); }
-.export-frame { display: block; width: 100%; height: clamp(130px, 42vh, 480px); border: 1px solid var(--line); background: white; }
-.export-options, .dialog-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.dialog-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 @media (max-width: 720px) {
   .shell[data-expanded="true"] { grid-template-columns: 72px minmax(0, 1fr); }
   .workspace[data-mode="split"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }

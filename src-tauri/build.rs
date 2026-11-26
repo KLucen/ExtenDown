@@ -10,6 +10,7 @@ fn main() {
             "save_markdown",
             "save_markdown_as",
             "reload_markdown",
+            "normalize_markdown_line_endings",
             "write_markdown_draft",
             "clear_markdown_draft",
             "recover_markdown_drafts",

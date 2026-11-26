@@ -17,6 +17,7 @@ import { MarkdownPreview, type PreviewEditing, type PreviewSourceRange } from '.
 import { SourceSurface } from '../renderer/source-surface';
 import type { SourceSurfaceHandle } from '../renderer/source-surface';
 import { useDocument } from './document-session';
+import { LineEndingDialog } from './line-ending-dialog';
 import { ScriptCommands, useScriptPlugins, type ScriptRunEntry } from './script-commands';
 import { Settings, useExtensions } from './settings';
 import { CommandPalette, EditorSearch, useCommandShortcuts, useShortcuts } from './commands';
@@ -66,6 +67,7 @@ function App() {
   const [scriptCommand, setScriptCommand] = useState<string | null>(null);
   const [scriptHistory, setScriptHistory] = useState<ScriptRunEntry[]>([]);
   const [exportSnapshot, setExportSnapshot] = useState<DocumentSnapshot | null>(null);
+  const [convertLineEndings, setConvertLineEndings] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [searchMode, setSearchMode] = useState<'find' | 'replace' | 'reading' | null>(null);
@@ -135,7 +137,7 @@ function App() {
     function keyboard(event: KeyboardEvent) {
       if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && !previewInputActive()) {
         menu.current?.removeAttribute('open');
-        if (!exportSnapshot && !settings && !paletteOpen && scriptCommand === null) {
+        if (!exportSnapshot && !settings && !paletteOpen && scriptCommand === null && !convertLineEndings) {
           setPresentation(false);
           setSearchMode(null);
         }
@@ -165,11 +167,10 @@ function App() {
     return writable && session.canLeaveInput() && (surface.current?.applyPatch(patch, expectedSource) ?? false);
   }
 
-  function sourceCommand(id: EditorCommandId, insertAtEnd = false) {
+  function sourceCommand(id: EditorCommandId) {
     if (!session.canLeaveInput() || (!writable && id !== 'edit.copy') || !surface.current) return;
     const original = session.currentSource();
-    const currentSelection = insertAtEnd
-      ? { start: original.length, end: original.length, direction: 'none' as const } : surface.current.selection();
+    const currentSelection = surface.current.selection();
     if (id === 'edit.copy' || id === 'edit.cut' || id === 'edit.paste') {
       void (async () => {
         try {
@@ -188,7 +189,7 @@ function App() {
       return;
     }
     const patch = buildSourceCommandPatch(id, original, currentSelection);
-    if (patch && patchSource(patch, original) && !insertAtEnd) surface.current.focus();
+    if (patch && patchSource(patch, original)) surface.current.focus();
   }
 
   function openSettings(tab: 'general' | 'plugins' | 'shortcuts' = 'general', query?: string) {
@@ -239,7 +240,7 @@ function App() {
   }
   const shortcut = (id: EditorCommandId) => shortcutLabel(EDITOR_COMMANDS[id], shortcuts.overrides, shortcuts.mac);
   useCommandShortcuts({
-    commands, shortcuts, blocked: Boolean(settings || exportSnapshot || paletteOpen || scriptCommand !== null),
+    commands, shortcuts, blocked: Boolean(settings || exportSnapshot || paletteOpen || scriptCommand !== null || convertLineEndings),
     canRun: (event, command) => {
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest('[data-reader-editable="true"]') &&
@@ -279,7 +280,6 @@ function App() {
       jump(request.from, request.to);
       return true;
     },
-    onInsert: id => sourceCommand(id, true),
     onActivityChange: (kind, active) => {
       if (active) previewActivity.current.add(kind);
       else previewActivity.current.delete(kind);
@@ -347,17 +347,20 @@ function App() {
           onJumpToPosition={offset => jump(offset)} />}
         <section className="document">
           {(session.notice || session.error || mixed) && <div className="document-bar">
-            {mixed && <span className="dirty">混合换行 · 只读</span>}
+            {mixed && <>
+              <span className="dirty">混合换行 · 只读</span>
+              <button type="button" disabled={pending} onClick={() => setConvertLineEndings(true)}>转换并编辑</button>
+            </>}
             {session.notice && <span className="notice" role="status">{session.notice}</span>}
             {session.error && <span className="error" role="alert">{session.error}</span>}
             {session.conflict && <>
               <button type="button" onClick={session.reload}>重新载入</button>
               <button type="button" onClick={() => void session.save(true)}>另存为</button>
             </>}
-            <button className="dismiss-notice" type="button" aria-label="关闭通知" onClick={() => {
+            {(session.notice || session.error) && <button className="dismiss-notice" type="button" aria-label="关闭通知" onClick={() => {
               session.setNotice('');
               session.setError('');
-            }}>×</button>
+            }}>×</button>}
           </div>}
           {searchMode === 'reading' && activeMode !== 'source'
             ? <ReadingSearch key={view.key} documentKey={String(view.key)} source={previewSource} onClose={() => setSearchMode(null)} />
@@ -424,6 +427,15 @@ function App() {
         replaceText={value => !pending && !mixed && (surface.current?.replaceText(value) ?? false)} />}
       {exportSnapshot && <ExportDialog snapshot={exportSnapshot} formats={plugins.formats} onClose={() => setExportSnapshot(null)}
         onSaved={result => session.setNotice('已导出 ' + result)} />}
+      {convertLineEndings && <LineEndingDialog desktop={desktop} onClose={() => setConvertLineEndings(false)}
+        onConvert={lineEnding => {
+          void session.normalizeLineEndings(lineEnding).then(converted => {
+            if (converted) requestAnimationFrame(() => {
+              if (activeMode === 'preview') readingPane.current?.focus();
+              else surface.current?.focus();
+            });
+          });
+        }} />}
     </div>
   );
 }

@@ -38,6 +38,7 @@ pub struct OpenedDocument {
     pub source: String,
     pub format: MarkdownFormat,
     pub revision: u64,
+    pub format_changed: bool,
     pub recovered: bool,
     pub base_source: Option<String>,
 }
@@ -57,6 +58,7 @@ impl DocumentSession {
                 source: String::new(),
                 format: detect_format("", false),
                 revision: 0,
+                format_changed: false,
                 recovered: false,
                 base_source: None,
             },
@@ -74,6 +76,34 @@ impl DocumentSession {
         session.document.format = format;
         session.baseline = digest(&bytes);
         Ok(session)
+    }
+
+    pub fn normalize_line_endings(
+        &mut self,
+        line_ending: LineEnding,
+        revision: u64,
+    ) -> CommandResult<OpenedDocument> {
+        if revision != self.document.revision {
+            return Err("revision-conflict");
+        }
+        if !matches!(line_ending, LineEnding::Lf | LineEnding::Crlf) {
+            return Err("invalid-line-ending");
+        }
+        if self.document.format.line_ending != LineEnding::Mixed {
+            return Err("line-endings-not-mixed");
+        }
+        let (source, format) = serialize_draft(
+            &self.document.source,
+            MarkdownFormat {
+                line_ending,
+                ..self.document.format
+            },
+        )?;
+        self.document.source = source;
+        self.document.format = format;
+        self.document.revision += 1;
+        self.document.format_changed = true;
+        Ok(self.document.clone())
     }
 
     pub fn save(
@@ -116,6 +146,7 @@ impl DocumentSession {
         self.document.source = disk_source;
         self.document.format = disk_format;
         self.document.revision += 1;
+        self.document.format_changed = false;
         self.document.recovered = false;
         self.document.base_source = None;
         self.baseline = candidate_digest;
@@ -431,6 +462,72 @@ mod tests {
         );
         document.save(copy.clone(), "# A\nB\n", 0).unwrap();
         assert_eq!(fs::read(copy).unwrap(), b"# A\r\nB\n");
+    }
+
+    #[test]
+    fn normalizes_mixed_endings_in_memory_until_explicit_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mixed.md");
+        let original = b"\xef\xbb\xbf# A\r\nB\nC\r";
+        fs::write(&path, original).unwrap();
+        let path = path.canonicalize().unwrap();
+        let mut session = DocumentSession::open(path.clone()).unwrap();
+        let baseline = session.baseline;
+
+        assert_eq!(
+            session.normalize_line_endings(LineEnding::Cr, 0).err(),
+            Some("invalid-line-ending")
+        );
+        let draft = session.normalize_line_endings(LineEnding::Crlf, 0).unwrap();
+        assert_eq!(draft.source, "# A\r\nB\r\nC\r\n");
+        assert_eq!(draft.format.bom_byte_length, 3);
+        assert_eq!(draft.format.line_ending, LineEnding::Crlf);
+        assert!(draft.format.has_trailing_line_ending);
+        assert!(draft.format_changed);
+        assert_eq!(draft.revision, 1);
+        assert_eq!(session.baseline, baseline);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(
+            session.save(path.clone(), "# Edited\nB\nC\n", 0).err(),
+            Some("revision-conflict")
+        );
+        assert_eq!(
+            session.normalize_line_endings(LineEnding::Lf, 1).err(),
+            Some("line-endings-not-mixed")
+        );
+
+        let saved = session.save(path.clone(), "# Edited\nB\nC\n", 1).unwrap();
+        assert!(!saved.format_changed);
+        assert_eq!(
+            fs::read(path).unwrap(),
+            b"\xef\xbb\xbf# Edited\r\nB\r\nC\r\n"
+        );
+    }
+
+    #[test]
+    fn line_ending_conversion_preserves_external_change_protection() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mixed.md");
+        fs::write(&path, b"# A\r\nB\nC").unwrap();
+        let path = path.canonicalize().unwrap();
+        let mut session = DocumentSession::open(path.clone()).unwrap();
+        let draft = session.normalize_line_endings(LineEnding::Lf, 0).unwrap();
+        assert_eq!(draft.source, "# A\nB\nC");
+        assert!(!draft.format.has_trailing_line_ending);
+
+        fs::write(&path, b"# External\r\n").unwrap();
+        assert_eq!(
+            session
+                .save(path.clone(), &draft.source, draft.revision)
+                .err(),
+            Some("external-change")
+        );
+        let copy = directory.path().join("copy.md");
+        session
+            .save(copy.clone(), &draft.source, draft.revision)
+            .unwrap();
+        assert_eq!(fs::read(path).unwrap(), b"# External\r\n");
+        assert_eq!(fs::read(copy).unwrap(), b"# A\nB\nC");
     }
 
     #[test]

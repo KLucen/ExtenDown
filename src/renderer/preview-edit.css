@@ -1,13 +1,4 @@
-.preview-edit-tools {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 6px;
-  margin: -4px 0 10px;
-  font: 12px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
-}
-.preview-edit-tools button, .preview-insert summary, .preview-block-actions button,
-.preview-edit-feedback button, .preview-table-dialog button {
+.preview-block-actions button, .preview-edit-feedback button, .preview-table-dialog button {
   border-radius: 4px;
   padding: 4px 8px;
   background: var(--surface-muted);
@@ -16,20 +7,6 @@
 .preview-table-actions button:last-child {
   background: var(--accent);
   color: var(--surface);
-}
-.preview-insert { position: relative; }
-.preview-insert summary { cursor: pointer; }
-.preview-insert > div {
-  position: absolute;
-  z-index: 1;
-  inset: calc(100% + 4px) 0 auto auto;
-  display: grid;
-  gap: 4px;
-  width: max-content;
-  padding: 5px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--surface);
 }
 .preview-edit-feedback, .preview-block-actions {
   font: 12px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;

@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { optionalComponents } from './scripts/optional-components.mjs';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), optionalComponents()],
   clearScreen: false,
   server: {
     host: '127.0.0.1',

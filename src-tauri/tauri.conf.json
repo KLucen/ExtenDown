@@ -22,12 +22,21 @@
     ],
     "security": {
       "capabilities": ["extendown-main"],
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'",
-      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' ws://127.0.0.1:1420; base-uri 'none'; form-action 'none'; object-src 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self'; connect-src ipc: http://ipc.localhost; base-uri 'none'; form-action 'none'; object-src 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:1420; base-uri 'none'; form-action 'none'; object-src 'none'"
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown document",
+        "description": "ExtenDown Markdown document",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      }
+    ],
     "icon": ["icons/icon.ico", "icons/icon.png"]
   }
 }

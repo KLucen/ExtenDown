@@ -1,22 +1,12 @@
 # ExtenDown Tauri Markdown 编辑器接入指南
 
-本指南说明 ExtenDown 如何复用 MerMarkd 的阅读器与源码编辑器组件。当前基线使用 Tauri v2、React、TypeScript、Vite 和 CodeMirror。源码、预览与分屏都从同一个 Markdown 草稿派生。P0 验收单窗口桌面壳和编辑界面，原生文档保存、多窗口及导出属于后续阶段。
+ExtenDown 使用 Tauri v2、React、TypeScript、Vite 和 CodeMirror，复用 MerMarkd 的源码编辑与阅读组件。源码、并排和预览共享 Markdown 草稿和撤销历史。具体复用范围见 [来源清单](../PROVENANCE.md)。
 
-## 1. 搭起第一个可运行版本
+## 启动与打包
 
-Windows 上需要 Node.js 22.12 或更新的受支持版本、Rust 的稳定版 MSVC 工具链、Visual Studio C++ Build Tools 和 Microsoft Edge WebView2 Runtime。安装 C++ 工具时选择“使用 C++ 的桌面开发”。先在新终端确认 `node --version` 和 `rustc --version` 都可运行。如果安装了 Rust，但 PowerShell 找不到 Cargo，可用下面的第一条命令仅给当前终端补齐搜索路径。环境安装说明以 [Tauri 官方前置条件](https://v2.tauri.app/start/prerequisites/#windows) 为准。
+在仓库根目录运行 `npm ci` 安装锁定的前端依赖。`npm run dev` 启动 `http://127.0.0.1:1420/`。浏览器使用文件选择器读取 UTF-8 文档，保存时下载副本。桌面开发命令会自行启动 Vite，运行前先结束占用这个端口的开发服务器。
 
-在解压目录运行：
-
-```powershell
-npm ci
-npm test
-npm run dev
-```
-
-打开 `http://127.0.0.1:1420/`。改动源码，确认预览同步更新，再切换源码、预览和分屏。打开本地文档后可以下载一份新副本，混合换行文档走保守的只读路径。用 UTF-8 BOM、CRLF、中文和 emoji 的文件检查打开与副本导出。
-
-切到桌面时结束手动运行的 Vite，再执行：
+Windows 需要 Node.js 22.12 或更新版本、Rust stable MSVC、Visual Studio C++ Build Tools 和 WebView2 Runtime。安装 C++ 工具时选择「使用 C++ 的桌面开发」。如果 `cargo` 已在 PATH 中，可略过环境变量这一行。[Tauri 前置条件](https://v2.tauri.app/start/prerequisites/)
 
 ```powershell
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
@@ -24,56 +14,105 @@ npm run tauri -- info
 npm run tauri -- dev
 ```
 
-`vite.config.ts` 和 `src-tauri/tauri.conf.json` 对齐 `127.0.0.1:1420`，生产前端目录为 `../dist`。`strictPort` 会在端口占用时直接报错，避免桌面窗口连接到另一个开发服务。修改应用标识、标题或端口时，同时核对相应配置。[Tauri 的 Vite 配置](https://v2.tauri.app/start/frontend/vite/)
+```powershell
+npm test
+npm run build
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+npm run tauri -- build --no-bundle -- --locked
+npm run tauri -- build --bundles nsis -- --locked
+```
 
-需要构建验证用的 Windows 可执行程序时执行 `npm run tauri -- build --no-bundle`。可执行程序位于 `src-tauri/target/release/` 下。面向其他机器发布时，再配置安装包图标、签名和 WebView2 分发方式，并在干净 Windows 验证安装与升级。[Tauri Windows 打包](https://v2.tauri.app/distribute/windows-installer/)
+`vite.config.ts` 与 `src-tauri/tauri.conf.json` 共享开发地址。Vite 使用 `strictPort`，生产应用从 `dist/` 加载内嵌资源。独立可执行程序位于 `src-tauri/target/release/`。Windows 安装器位于该目录下的 `bundle/nsis/`，Windows 专用配置见 `src-tauri/tauri.windows.conf.json`。[Tauri 的 Vite 配置](https://v2.tauri.app/start/frontend/vite/) · [Windows 打包](https://v2.tauri.app/distribute/windows-installer/)
 
-## 2. 按功能采用代码
+Windows 便携版本由 `extendown.exe` 和同目录的 `extendown-components/` 组成，可一起复制。用 NSIS 安装时，安装器根据组件页的选择复制官方扩展，核心编辑器和原生文件服务始终安装。
 
-| 需求 | 对应代码 | 接入要点 |
-| --- | --- | --- |
-| 预览 CommonMark、GFM、表格、列表和代码围栏 | `src/renderer/markdown-preview.tsx`、`reader-markdown.tsx`、`src/core/markdown-snapshot.ts`、`reading-render.ts` | 从 Markdown 缓冲区生成安全树，使用 React 渲染。预览不会保存或回写 Markdown。 |
-| 源码编辑、光标和选区 | `src/renderer/source-surface.tsx` | 给每个打开的文档一个稳定的 `documentKey`。通过 `value` 和 `onChange` 接入草稿，用 `SourceSurfaceHandle` 聚焦或跳转。示例在独立的装配代码中添加 CodeMirror 历史。 |
-| UTF-8、BOM 和换行 | `src/core/markdown-source.ts`、`editor-text.ts` | 打开时严格解码，保留文件格式元数据，给编辑器 LF 投影。导出时按原换行风格重建，再编码为字节。对混合换行不要偷偷统一格式。 |
-| 目录、段落定位和可见文字查找 | `src/core/source-outline.ts`、`reader-navigation.ts`，以及阅读搜索模块 | 目录与定位结果绑定文档和修订版本。CodeMirror 偏移是 UTF-16，持久化字节偏移需要显式映射。 |
-| 阅读态局部编辑 | `src/core/reader-edit.ts`、`selection-map.ts`、`src/renderer/reader-editable-block.tsx`、`reader-edit-session.ts` | 复用的是受限的文字跨度映射和组合输入处理。只有范围可精确定位时才修改 Markdown，映射失败时把内容交给源码编辑入口。 |
+## 窗口与文档
 
-预览接口的最小用法：
+顶栏集中提供文件、查找、目录、专注、导出和设置。左侧的源码、并排和预览按钮切换编辑布局，顶栏左端的按钮负责收起或展开整个侧栏。Windows 桌面版将窗口操作放在同一顶栏右端。
 
-```tsx
-import { MarkdownPreview } from './renderer/markdown-preview';
+「文件 → 打开文件」或 `Ctrl+O` 使用系统文件选择器打开 `.md`、`.markdown` 或 `.txt`。桌面版支持拖放打开。窗口可通过「文件 → 新建窗口」独立创建，宿主按规范化路径查找现有会话。再次打开已载入的文档时会激活其窗口。
 
-export function PreviewPane({ draft }: { draft: string }) {
-  return <MarkdownPreview source={draft} />;
+「文件 → 保存」或 `Ctrl+S` 写入当前文档，新文档会打开另存对话框。首次读入时校验 UTF-8，支持 BOM 和 LF、CRLF、CR。混合换行文档保持只读，可另存原样副本。桌面和浏览器入口的单文档上限为 2 MiB。只有显式保存时才写入源文件，自动保存的恢复草稿放在应用数据目录下。
+
+Rust 宿主将文档 ID 绑定到发起操作的窗口，保存时检查修订号和原始文件的 SHA-256，并在发布临时文件前复核磁盘状态。如果外部程序已改动原件，界面提供「重新载入」和「另存为」。关闭或切换带修改的文档时，可以确认保留草稿。重开应用后从「文件 → 恢复草稿」载入。如果磁盘内容已经改变，恢复的草稿作为待另存的新文档打开。
+
+### `.md` 默认应用
+
+Windows 的 NSIS 安装器通过 `src-tauri/windows/file-associations.nsh` 注册 ExtenDown 的打开命令和可处理的 `.md`、`.markdown` 类型。安装后，从「设置 → 常规 → 选择 .md 默认应用」进入 Windows 默认应用面板，查找 `.md` 并选择 ExtenDown。`.markdown` 可以在同一面板单独配置。双击关联文件后，文件路径由系统传给桌面应用，再转交已有的 ExtenDown 进程或新开的窗口。
+
+## 复用与插件接口
+
+| 入口 | 职责 |
+| --- | --- |
+| `src/renderer/source-surface.tsx` | CodeMirror、选区、导航、软换行和输入法组合输入 |
+| `src/renderer/markdown-preview.tsx` | Markdown 排版阅读、章节定位、受控相对图片 |
+| `src/core/preview-projection.ts` | 从快照生成安全 HAST、标题锚点和可用扩展的呈现结果 |
+| `src/core/plugins/` | Manifest、主题令牌、扩展注册与注销、主题包加载 |
+| `src/demo/document-session.ts` | 前端缓冲区、文档修订和桌面 IPC 装配 |
+| `src-tauri/src/document.rs`、`recovery.rs` | 窗口文档会话、文件保存与草稿恢复 |
+
+标题锚点、选区、目录和预览都来自当时的文档草稿。保留同一个 `documentKey` 以维持视图间的撤销历史，并在打开另一份文档时重建编辑器会话。输入法候选期间，保存和切换文档等待组合输入结束。原始 HTML 经现有白名单和清洗流程，公式和高亮由已验证的内置转换器生成。相对图片由 Rust 在文档目录范围内解析、检查文件类型和读取大小。[Tauri 权限](https://v2.tauri.app/security/capabilities/) · [内容安全策略](https://v2.tauri.app/security/csp/)
+
+首次启动可选择启用公式、Mermaid、专注视图与各导出格式，之后在「设置 → 插件」调整已安装的扩展。数学扩展支持 `$…$` 和 `$$` 公式，可离线渲染为 MathML。Mermaid 从 `mermaid` 围栏生成图像，关闭模块或排版失败时保留代码块。高亮支持 Bash、CSS、JavaScript、JSON、Python、Rust、SQL、TypeScript 与 XML/HTML。
+
+Windows 安装器的组件页提供 HTML、PDF、PNG/JPG、数学公式、Mermaid、专注视图、额外代码语言和 Midnight 主题。额外语言包提供 C、C++、C#、Go、Java、Lua、Markdown 和 PowerShell。标准选择包含所有组件。更改物理安装内容时重新运行安装器。插件设置用于启停已安装组件，也可为 PNG 和 JPG 分别设置启用状态。
+
+### 官方模块
+
+在 `src/core/plugins/builtin.ts` 声明 `PluginModule`。每个模块的 Manifest 填写 `schemaVersion`、独立 `id`、版本、`hostApi`、`kind`、`entry`、贡献 ID、权限和依赖。当前宿主 API 为 `1.0.0`。`activate(registry)` 使用 `registry.register(kind, contribution)` 注册贡献。每次注册返回 `Disposable`，插件停用时由注册表释放。激活函数也可以返回清理资源的函数。
+
+1. 把新增模块接入 `src/demo/settings.tsx` 的启用选项。注册表验证 Manifest、依赖和贡献 ID，模块激活后才进入可用功能列表。
+2. 在功能宿主消费贡献。语法模块在安全 Markdown 投影后接入渲染，视图模块由编辑器消费，导出器在 `src/core/export/` 读取只读文档快照。新的导出格式同时声明输出文件后缀和保存规则。
+3. 在 `tests/core/plugins.test.ts` 覆盖激活、停用和兼容性，在相应功能入口验证贡献生效。文件、窗口和对话框通过固定的 Tauri 命令实现，原生改动随应用编译发布。
+
+若模块需要独立安装，在 `scripts/optional-components.mjs` 登记动态入口，并将组件 ID 接入 `src-tauri/windows/components.nsh`。Windows 构建从内嵌资源中移出该入口的专用代码，NSIS 根据组件选择复制文件。Rust 宿主只从本版内置的资源清单中查找这些文件，并在加载前核对 SHA-256。两个组件共用的导出渲染资源随任一需要它的组件安装。
+
+「安装插件文件」用于数据型主题包。官方模块通过应用安装器或应用更新交付，第三方可执行插件由后续隔离运行时接入。
+
+### 主题包
+
+主题包是扩展名为 `.edplugin` 的 ZIP。根目录放置 UTF-8 编码的 `manifest.json` 和 `theme.json`，可以附带 `preview.png`。存档最大 512 KiB，两个 JSON 文件各最大 16 KiB。主题可仅声明要覆盖的令牌，其余使用默认值。用户包以 JSON 令牌描述颜色、字体和阅读宽度，权限和依赖均留空。
+
+`manifest.json`
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "org.example.aurora",
+  "name": "Aurora",
+  "version": "1.0.0",
+  "hostApi": "^1.0.0",
+  "kind": "theme",
+  "entry": "theme.json",
+  "contributes": ["theme:aurora"],
+  "permissions": [],
+  "dependencies": {}
 }
 ```
 
-源码编辑器的 `onChange` 是草稿更新入口。用户修改视图模式时，保留同一缓冲区和文档标识。切换到另一份文件时更新 `documentKey`，让旧文档的输入、选区和历史结束。如果将来让两种界面共同修改 Markdown，先确定唯一的撤销历史所有者。保留代码中的 IME 活动状态和收尾检查，防止候选拼音提前进入历史或触发保存。
+`theme.json`
 
-阅读渲染保留 MerMarkd 的 HTML 白名单和清洗顺序。默认预览将外部链接和图片显示为受控内容。实现图片预览或打开外链时，让宿主单独校验协议和授权范围。对相对图片按当前文档目录解析，验证真实路径，并为允许的媒体返回受限资源。这个职责适合放在 Rust 侧，避免前端获得任意路径访问能力。[Tauri 权限与 capability](https://v2.tauri.app/security/capabilities/) · [Tauri 内容安全策略](https://v2.tauri.app/security/csp/)
+```json
+{
+  "schemaVersion": 1,
+  "tokens": {
+    "surface": "#eef7f3",
+    "text": "#203029",
+    "readingWidth": "68ch"
+  }
+}
+```
 
-## 3. 把浏览器副本演示接到原生文件生命周期
+在「设置 → 插件」选择「安装插件文件」，再用「设置 → 常规 → 外观」切换。插件列表可停用或卸载本地主题。安装状态与启用设置保存在当前应用的本地配置中。
 
-先在 Rust 实现单窗口、单文档。前端调用明确的业务命令，路径由用户通过原生对话框选定，再由 Rust 保存到当前文档会话。建议从以下合同开始：
+## 导出
 
-| 命令 | 前端参数 | Rust 侧负责 |
-| --- | --- | --- |
-| `open_markdown` | 无 | 打开文件选择框，限制文件类型与可接受大小，读取严格 UTF-8 字节，保存路径、基线摘要和格式，返回文档标识、显示名称、源码及格式。取消时保留现有会话。 |
-| `save_markdown` | `documentId`、草稿文本和单调递增 `revision` | 找到已授权路径，核对文档标识与修订，检查外部变更和当前保存状态。重建原格式，使用已验证的临时文件和发布策略写入，成功后更新基线。 |
-| `save_markdown_as` | 草稿文本和 `revision` | 通过保存对话框选择新路径，确认覆盖语义，持久化成功后才切换当前文档身份。 |
+顶栏的「导出」使用点击时的草稿快照。选择格式，检查预览，再通过系统保存对话框选定目标。浏览器版用下载代替保存对话框。
 
-使用 `#[tauri::command]` 注册这些操作，由 `@tauri-apps/api/core` 的 `invoke` 调用。当前骨架只装载前端，正式接入时再为命令、对话框或资源新增精确授权。用一个有类型的适配器集中 IPC，例如 `DocumentHost.open/save/saveAs`，这样浏览器和桌面可以共用界面与测试夹具。[前端调用 Rust](https://v2.tauri.app/develop/calling-rust/) · [Tauri 对话框](https://v2.tauri.app/plugin/dialog/)
+| 格式 | 效果与限制 |
+| --- | --- |
+| HTML | 单文件离线 HTML。内嵌样式、Mermaid 图表和获准读取的相对图片。无法加载的图片保留文字提示。 |
+| PDF | 图像分页，可选 A4 或 Letter、方向、页边距和清晰度。页面文字随图像保存，需要原文文本时用 HTML 输出。最多 100 页。 |
+| PNG、JPG | 可选单张图像或分段图片 ZIP，支持 1× 或 2×。单张图像限制单边 16,384 像素、总面积 2,200 万像素。 |
 
-启用 IPC 时将 `@tauri-apps/api` 加入 `package.json` 和锁文件，按 Tauri 的开发、生产协议配置 `connect-src`，并保持远程页面没有桌面权限。骨架默认的生产配置为 `connect-src 'none'`，这是当前仅加载前端的设置。最小验证从原生对话框打开一份合成夹具，再到保存冲突；不要先开放通用文件写入命令。
-
-保存先做下面的闭环。Rust 记录打开时的源字节摘要。显式保存请求到达时重新读取目标，若已被外部编辑则显示冲突并提供重新载入或另存。保存候选先写同目录临时文件并同步，替换失败时保留恢复所需文件。Windows 上要用实际落盘测试验证目标已存在、只读目录、外部写入竞争和中断恢复；仅比较摘要后直接 `fs::write` 容易在失败时截断原件。保存完毕再更新基线，并给仍在编辑的较新修订保留未保存状态。文件打开、窗口关闭和退出都通过同一套未保存输入检查。
-
-首轮至少核对这些行为：显式保存或另存之前源文件字节不变。原始 BOM、换行风格和尾换行在无修改时精确往返。拒绝非法 UTF-8 和不支持的混合换行写入。外部修改不被静默覆盖。真实中文输入法确认、取消、失焦与保存互不干扰。
-
-## 4. 逐步实现接近 Typora 的编辑体验
-
-1. **先完成独立文件编辑闭环。** 打开、源码编辑、预览、保存、另存、关闭和恢复都能在 Tauri 打包版运行。把文件权限、历史和恢复问题解决在这一步。
-2. **做一小块排版内编辑。** 从普通段落和标题开始，让激活的块显示可编辑内容。每次改动通过源范围更新 Markdown，并用解析结果验证改动后的语义。表格、链接、跨格式粘贴和列表嵌套逐类开放。
-3. **再优化所见即所得。** 在源码引擎上做局部语法显示，或另选结构化编辑器。结构化编辑器需要为 Markdown 方言、注释、空白和原始 HTML 定义往返规则。当前预览在 UI 线程解析，分屏示例用延迟值减少输入阻塞。面向大文档时，把预览投影计算移到 Web Worker，并根据文档标识和修订丢弃过期结果；上线前测量真实 IME、撤销后光标、可编辑标题的辅助名称、大文档查找和多屏 DPI。
-
-一个实用验收样本是在同一份含 BOM、CRLF、中文、emoji、表格、嵌套列表、链接和代码围栏的文档中，分别完成打开、跨视图撤销、显式保存、外改冲突与重启恢复。实现复杂排版编辑前先固定这些文件级保证，后续功能才能共用已有验证。
+PDF、PNG 和 JPG 先在独立页面完成排版，再按所选格式渲染。长文档可在 PNG 或 JPG 的导出设置选中「分段图片（ZIP）」。导出文件最大 64 MiB，达到上限时界面显示错误。可复测的用例和平台范围见 [验收记录](VERIFICATION.zh-CN.md)。

@@ -1,0 +1,27 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build -- --mode windows-components"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ExtenDown",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 420,
+        "minHeight": 480,
+        "decorations": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["nsis"],
+    "fileAssociations": [],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/file-associations.nsh"
+      }
+    }
+  }
+}

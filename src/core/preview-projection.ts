@@ -2,10 +2,12 @@ import { extensionsFromSnapshot } from './markdown-reading.ts';
 import { parseMarkdownSnapshot } from './markdown-snapshot.ts';
 import { readingRenderFromSnapshot } from './reading-render.ts';
 import { sectionFragmentIds, sectionsFromSnapshot } from './sections.ts';
+import { applyReadingExtensions, hasMathExtension, type ReadingOptions } from './plugins/reading-extensions.ts';
 
 /** A read-only view of a single exact source version. */
-export function buildPreviewProjection(source: string) {
-  const snapshot = parseMarkdownSnapshot(source);
+export function buildPreviewProjection(source: string, options: ReadingOptions = {}) {
+  const math = hasMathExtension(options);
+  const snapshot = parseMarkdownSnapshot(source, { math });
   const outline = sectionsFromSnapshot(snapshot);
   const fragments = sectionFragmentIds(outline);
   const headingIds = new Map(outline.sections.map((section, index) => [
@@ -14,7 +16,7 @@ export function buildPreviewProjection(source: string) {
   ]));
 
   return {
-    renderTree: readingRenderFromSnapshot(snapshot),
+    renderTree: applyReadingExtensions(readingRenderFromSnapshot(snapshot), snapshot, options),
     unsupportedExtensions: extensionsFromSnapshot(snapshot),
     headingIds,
     fragments: new Set(fragments),

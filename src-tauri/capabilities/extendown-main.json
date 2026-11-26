@@ -1,7 +1,34 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "extendown-main",
-  "description": "ExtenDown main window has no native command permissions in the P0 baseline.",
-  "windows": ["main"],
-  "permissions": []
+  "description": "ExtenDown main window document commands and window creation are registered by the Rust host.",
+  "windows": ["main", "document-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "allow-current-document",
+    "allow-new-markdown",
+    "allow-new-document-window",
+    "allow-open-markdown",
+    "allow-recent-markdown",
+    "allow-open-recent-markdown",
+    "allow-save-markdown",
+    "allow-save-markdown-as",
+    "allow-reload-markdown",
+    "allow-write-markdown-draft",
+    "allow-clear-markdown-draft",
+    "allow-recover-markdown-drafts",
+    "allow-restore-markdown-draft",
+    "allow-discard-markdown-draft",
+    "allow-read-document-image",
+    "allow-open-theme-package",
+    "allow-set-default-markdown-app",
+    "allow-save-export",
+    "allow-installed-components"
+  ]
 }

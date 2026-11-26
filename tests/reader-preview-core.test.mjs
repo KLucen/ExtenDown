@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildPreviewProjection, resolvePreviewFragment } from '../src/core/preview-projection.ts';
+import { extraLanguagesExtension, mathMarkdownExtension } from '../src/core/plugins/builtin.ts';
+import { loadAdditionalLanguages, loadMathRenderer } from '../src/core/plugins/reading-extensions.ts';
 
 function elements(root) {
   const found = [];
@@ -47,4 +49,47 @@ test('fragment lookup accepts only titles in the current source, including dupli
   for (const value of ['#引文标题', '#%E0%A4', '#', 'paper.md#中文', 'file:///paper.md#中文', 'https://example.invalid/#中文', undefined]) {
     assert.equal(resolvePreviewFragment(value, fragments), null);
   }
+});
+
+test('the optional math module adds MathML only for parsed Markdown formulas', async () => {
+  await loadMathRenderer();
+  const source = [
+    'Inline $x^2$',
+    ['$$', '\\frac{1}{x}', '$$'].join('\n'),
+    '<math><mi>RAW_MARKUP</mi></math>',
+    ['~~~text', '$x^2$', '~~~'].join('\n'),
+    String.raw`$\href{javascript:alert(1)}{y}$`,
+  ].join('\n\n');
+  const core = buildPreviewProjection(source);
+  assert.ok(core.unsupportedExtensions.includes('display-math'));
+  assert.ok(!elements(core.renderTree).some(node => node.tagName === 'math'));
+  const active = buildPreviewProjection(source, { extensions: [mathMarkdownExtension] });
+  const tags = elements(active.renderTree);
+  const equations = tags.filter(node => node.tagName === 'math');
+  assert.equal(equations.length, 3);
+  assert.equal(equations.filter(node => node.properties.display === 'block').length, 1);
+  assert.ok(tags.some(node => node.tagName === 'mfrac'));
+  assert.ok(tags.some(node => node.tagName === 'msup'));
+  assert.ok(!tags.some(node => 'href' in node.properties));
+  assert.doesNotMatch(JSON.stringify(active.renderTree), /RAW_MARKUP/);
+});
+
+test('code fences highlight selected languages and keep unsupported code literal', () => {
+  const source = ['~~~js', 'const tag = "<script>";', '~~~', '', '~~~unknown', 'const x = 1', '~~~'].join('\n');
+  const highlighted = buildPreviewProjection(source, { highlightCode: true });
+  const spans = elements(highlighted.renderTree).filter(node => node.tagName === 'span');
+  assert.ok(spans.some(span => span.properties.className?.includes('hljs-keyword')));
+  assert.ok(spans.some(span => span.properties.className?.includes('hljs-string')));
+  assert.ok(!elements(highlighted.renderTree).some(node => node.tagName === 'script'));
+  const codes = elements(highlighted.renderTree).filter(node => node.tagName === 'code');
+  assert.equal(codes[1].children[0].value, 'const x = 1\n');
+});
+
+test('the extra language pack adds code colors only while enabled', async () => {
+  const source = ['~~~go', 'package main', '~~~'].join('\n');
+  await loadAdditionalLanguages();
+  const core = buildPreviewProjection(source, { highlightCode: true });
+  const active = buildPreviewProjection(source, { highlightCode: true, extensions: [extraLanguagesExtension] });
+  assert.ok(!elements(core.renderTree).some(node => node.tagName === 'span'));
+  assert.ok(elements(active.renderTree).some(node => node.properties.className?.includes('hljs-keyword')));
 });

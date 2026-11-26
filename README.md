@@ -1,43 +1,52 @@
-# Markdown Editor · Tauri 复用包
+# ExtenDown
 
-这是从 MerMarkd 提取的 Markdown 阅读与源码编辑起点。示例提供源码、预览和分屏三种显示方式，各视图共用同一份 Markdown 缓冲区。复用范围限阅读和编辑，卡片、画布、批注侧车和 Electron 外壳均未纳入。代码位于 `src/`，产品范围和插件生态见 [首版设计方案](docs/INITIAL_DESIGN.zh-CN.md)，桌面接入步骤见 [Tauri 接入指南](docs/TAURI-GUIDE.zh-CN.md)。
+ExtenDown 是基于 Tauri v2 的本地 Markdown 编辑器。P0 基线复用 MerMarkd 的源码编辑和安全阅读组件，提供源码、预览和分屏三种视图，并让它们共用同一份 Markdown 草稿。
 
-## 先在浏览器体验
+当前版本用于验收编辑界面与桌面宿主启动。原生文件保存、多窗口、代码高亮和 PDF/HTML/PNG/JPG 导出仍按 [首版设计方案](docs/INITIAL_DESIGN.zh-CN.md) 后续阶段开发。组件来源和复用范围见 [来源清单](PROVENANCE.md)。
 
-使用 Node.js 22.12 或更新的受支持版本。解压后在本目录运行：
+## 环境
+
+浏览器开发需要 Node.js 22.12 或更新版本。Windows 桌面开发还需要 Rust stable MSVC、Visual Studio C++ Build Tools 和 WebView2 Runtime。
+
+在仓库根目录安装依赖并启动开发服务。
 
 ```powershell
 npm ci
+npm test
 npm run dev
 ```
 
-浏览器打开 `http://127.0.0.1:1420/`。可以试改内置文档，也可以打开本地 UTF-8 Markdown，编辑后显式下载副本。
+在浏览器打开 `http://127.0.0.1:1420/`。应用会载入内置示例文档。在源码区输入 Markdown，检查分屏预览是否更新，再切换源码、预览和分屏。可通过“打开文件”载入本地 Markdown，并用“下载副本”保存编辑结果。
 
-## 启动 Tauri 桌面窗口
-
-Windows 需要 Rust、Visual Studio C++ Build Tools 和 Edge WebView2。安装好环境并重新打开终端后运行：
+运行以下命令启动 Windows 桌面窗口。若当前终端可以运行 `cargo`，可略过第一行。
 
 ```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 npm run tauri -- info
 npm run tauri -- dev
 ```
 
-如果之前手动启动了 `npm run dev`，先结束那个进程，让 Tauri 自己启动前端。示例使用 Tauri v2，源码可按文件移植到新项目。桌面原生保存、文件引用授权和所见即所得编辑方案见指南。
+若已手动运行 `npm run dev`，请先结束它。Tauri 会自行启动 Vite。macOS 和 Linux 使用同一组 npm 命令，系统依赖见 [Tauri 前置条件](https://v2.tauri.app/start/prerequisites/)。
+
+## P0 验收
 
 ```powershell
 npm test
 npm run build
-npm run tauri -- build --no-bundle
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+npm run tauri -- build --no-bundle -- --locked
 ```
+
+当前 Windows 验收记录见 [P0 验收记录](docs/VERIFICATION.zh-CN.md)。Vite 与 Tauri 前端配置固定使用 `127.0.0.1:1420`。项目版本、依赖与应用标识集中在 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json`。
 
 ## 复用入口
 
 | 文件 | 用途 |
 | --- | --- |
-| `src/renderer/source-surface.tsx` | CodeMirror 源码编辑表面、选区控制、软换行和组合输入状态 |
-| `src/renderer/markdown-preview.tsx` | 独立只读预览入口 |
-| `src/core/` | Markdown 解析与安全渲染、目录、编码及换行工具、可映射编辑逻辑 |
-| `src/demo/` | 把阅读和编辑接到同一缓冲区的示例 |
-| `src-tauri/` | 接入同一套前端的 Tauri v2 桌面宿主 |
+| `src/renderer/source-surface.tsx` | CodeMirror 源码编辑器、选区、导航、软换行和输入法组合输入 |
+| `src/renderer/markdown-preview.tsx` | CommonMark/GFM 安全预览 |
+| `src/core/` | Markdown 投影、章节导航、源码映射、UTF-8/BOM/换行和安全清洗 |
+| `src/demo/main.tsx` | P0 源码、预览和分屏共享缓冲区装配 |
+| `src-tauri/` | Tauri v2 桌面宿主 |
 
-本机通过了 51 项单测、生产前端构建、Edge 浏览器交互与 Windows WebView2 桌面启动验证。验证范围见 [验收记录](docs/VERIFICATION.zh-CN.md)，原始文件与适配代码见 [来源清单](PROVENANCE.md)。本包沿用原仓库的 `UNLICENSED` 标记，供该项目所有者继续开发。
+首版产品范围、插件边界和开发阶段见 [首版设计方案](docs/INITIAL_DESIGN.zh-CN.md)。桌面接入细节见 [Tauri 接入指南](docs/TAURI-GUIDE.zh-CN.md)。

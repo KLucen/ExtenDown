@@ -1,6 +1,6 @@
-# 基于复用包开发 Tauri Markdown 编辑器
+# ExtenDown Tauri Markdown 编辑器接入指南
 
-这份指南把 MerMarkd 的阅读器与源码编辑器接到一个独立的 Tauri v2 应用。演示使用 React、TypeScript、Vite 和 CodeMirror。文档正文以 Markdown 字符串为准，源码和预览都从同一个草稿派生。桌面宿主用于加载该界面，原生文档保存是下一个独立开发切片。
+本指南说明 ExtenDown 如何复用 MerMarkd 的阅读器与源码编辑器组件。当前基线使用 Tauri v2、React、TypeScript、Vite 和 CodeMirror。源码、预览与分屏都从同一个 Markdown 草稿派生。P0 验收单窗口桌面壳和编辑界面，原生文档保存、多窗口及导出属于后续阶段。
 
 ## 1. 搭起第一个可运行版本
 

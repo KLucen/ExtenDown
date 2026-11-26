@@ -224,7 +224,7 @@ function App() {
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">墨</span>
-          <h1>墨页</h1>
+          <h1>ExtenDown</h1>
         </div>
         <div className="modes" role="group" aria-label="编辑视图">
           {MODES.map(({ value, label }) => (

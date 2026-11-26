@@ -1,9 +1,9 @@
 {
-  "name": "markdown-editor-tauri-kit",
+  "name": "extendown",
   "version": "0.1.0",
   "private": true,
   "license": "UNLICENSED",
-  "description": "Reusable Markdown reader and source editor extracted from MerMarkd",
+  "description": "ExtenDown Markdown editor desktop application",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

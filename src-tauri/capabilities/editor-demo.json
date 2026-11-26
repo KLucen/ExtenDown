@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "editor-demo",
-  "description": "The single editor window uses web APIs and has no Tauri command permissions.",
-  "windows": ["main"],
-  "permissions": []
-}

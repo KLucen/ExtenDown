@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "extendown-main",
+  "description": "ExtenDown main window has no native command permissions in the P0 baseline.",
+  "windows": ["main"],
+  "permissions": []
+}

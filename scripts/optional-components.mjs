@@ -2,19 +2,41 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { COMPONENT_CATEGORIES, COMPONENT_PRESETS, OFFICIAL_COMPONENTS } from '../src/core/plugins/component-catalog.ts';
 
 const output = fileURLToPath(new URL('../src-tauri/target/optional-components/', import.meta.url));
 const portable = fileURLToPath(new URL('../src-tauri/target/release/extendown-components/', import.meta.url));
-const groups = {
-  html: ['save-html-export.ts'],
-  math: ['math-engine.ts'],
-  mermaid: ['mermaid-engine.ts'],
-  focus: ['focus-view.ts'],
-  pdf: ['raster-export.ts', 'pdf-engine.ts'],
-  images: ['raster-export.ts'],
-  languages: ['additional-languages.ts'],
-  theme: ['official-theme.ts'],
-};
+const groups = Object.fromEntries(OFFICIAL_COMPONENTS.map(item => [item.id, item.entries]));
+
+function nsisCatalog() {
+  const lines = [];
+  const macro = (name, commands) => lines.push(`!macro ${name}`, ...commands.map(command => '  ' + command), '!macroend', '');
+  for (const [name, command] of [
+    ['DECLARE', 'ExtendownDeclare'], ['LOAD', 'ExtendownLoadChoice'],
+    ['READ', 'ExtendownReadCheckbox'], ['SAVE', 'ExtendownSaveChoice'],
+  ]) macro('EXTENDOWN_COMPONENT_' + name, OFFICIAL_COMPONENTS.map(item => `!insertmacro ${command} ${item.id}`));
+  const choices = [];
+  const columns = [['writing', 'view'], ['export', 'appearance']];
+  for (const [column, categories] of columns.entries()) {
+    let row = 32;
+    const left = column === 0 ? 0 : 50;
+    for (const category of categories) {
+      choices.push(`!insertmacro ExtendownCategory "${COMPONENT_CATEGORIES[category]}" ${left}% ${row}u`);
+      row += 12;
+      for (const item of OFFICIAL_COMPONENTS.filter(item => item.category === category)) {
+        choices.push(`!insertmacro ExtendownCheckbox ${item.id} "${item.name}" ${left + 2}% ${row}u`);
+        row += 13;
+      }
+      row += 4;
+    }
+  }
+  macro('EXTENDOWN_COMPONENT_CHECKS', choices);
+  for (const [name, selected] of Object.entries(COMPONENT_PRESETS)) {
+    macro('EXTENDOWN_COMPONENT_' + name.toUpperCase(), OFFICIAL_COMPONENTS.map(item =>
+      `!insertmacro ExtendownSetCheck ${item.id} ${selected.includes(item.id) ? 1 : 0}`));
+  }
+  return lines.join('\n');
+}
 
 function reachable(bundle, starts, blocker = () => false) {
   const visited = new Set();
@@ -106,6 +128,7 @@ export function optionalComponents() {
         delete bundle[file];
       }
       writeFileSync(resolve(output, 'component-files.nsh'), nsisInventory(assets));
+      writeFileSync(resolve(output, 'component-catalog.nsh'), nsisCatalog());
       this.emitFile({ type: 'asset', fileName: 'optional-assets.json',
         source: JSON.stringify({ groups: Object.keys(groups), assets }) });
       this.info('Separated ' + owners.size + ' component assets from the Windows editor executable.');

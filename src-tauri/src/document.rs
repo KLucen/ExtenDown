@@ -126,6 +126,7 @@ impl DocumentSession {
 #[derive(Default)]
 pub struct DocumentStore {
     pub windows: HashMap<String, DocumentSession>,
+    pub workspace_locations: HashMap<String, (String, u32)>,
 }
 
 impl DocumentStore {
@@ -303,10 +304,21 @@ fn optional_digest(path: &Path) -> CommandResult<Option<[u8; 32]>> {
 }
 
 fn verify_baseline(path: &Path, baseline: Option<[u8; 32]>) -> CommandResult<()> {
+    if baseline.is_some() && path.canonicalize().ok().as_deref() != Some(path) {
+        return Err("external-change");
+    }
     if optional_digest(path).map_err(|_| "external-change")? != baseline {
         return Err("external-change");
     }
     Ok(())
+}
+
+pub fn disk_status(path: &Path, baseline: [u8; 32]) -> &'static str {
+    match optional_digest(path) {
+        Ok(Some(current)) if current == baseline => "unchanged",
+        Ok(None) => "missing",
+        _ => "changed",
+    }
 }
 
 pub fn publish(
@@ -353,6 +365,7 @@ mod tests {
         let path = folder.path().join("round-trip.md");
         let original = b"\xef\xbb\xbf# One\r\n";
         fs::write(&path, original).unwrap();
+        let path = path.canonicalize().unwrap();
         let before = fs::metadata(&path).unwrap().modified().unwrap();
         let mut document = DocumentSession::open(path.clone()).unwrap();
         document.save(path.clone(), "# One\n", 0).unwrap();
@@ -377,6 +390,32 @@ mod tests {
         document.save(copy.clone(), "# Draft\n", 0).unwrap();
         assert_eq!(fs::read(original).unwrap(), b"# External\n");
         assert_eq!(fs::read(copy).unwrap(), b"# Draft\n");
+    }
+
+    #[test]
+    fn external_rename_reports_missing_and_preserves_a_dirty_draft() {
+        let folder = tempfile::tempdir().unwrap();
+        let original = folder.path().join("original.md");
+        let moved = folder.path().join("moved.md");
+        fs::write(&original, b"# Original\n").unwrap();
+        let original = original.canonicalize().unwrap();
+        let mut session = DocumentSession::open(original.clone()).unwrap();
+        let drafts = folder.path().join("drafts");
+        use crate::recovery::RecoveryDraft;
+        RecoveryDraft::write(&drafts, &session, "# Unsaved\n".into()).unwrap();
+        fs::rename(&original, &moved).unwrap();
+        assert_eq!(disk_status(&original, session.baseline), "missing");
+        assert_eq!(
+            session.save(original, "# Unsaved\n", 0).err(),
+            Some("external-change")
+        );
+        let recovered = RecoveryDraft::read(&drafts, &session.document.document_id)
+            .unwrap()
+            .restore(true)
+            .unwrap();
+        assert!(recovered.document.path.is_none());
+        assert_eq!(recovered.document.source, "# Unsaved\n");
+        assert_eq!(fs::read(moved).unwrap(), b"# Original\n");
     }
 
     #[test]

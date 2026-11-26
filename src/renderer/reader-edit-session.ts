@@ -11,6 +11,7 @@ interface ReaderEditSessionOptions {
   readonly onCommit: (text: string) => Promise<boolean>;
   readonly onDraftChange: (dirty: boolean) => void;
   readonly onCommittingChange: (active: boolean) => void;
+  readonly onFinish?: () => void;
   readonly onRestricted: (reason: string, draftText?: string) => void;
   readonly scheduler: ReaderEditScheduler;
 }
@@ -67,6 +68,7 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
     if (/\r|\n/u.test(text)) {
       options.onRestricted('换行请在源码中继续，已保留未应用的输入。', text);
       restore();
+      options.onFinish?.();
       return false;
     }
     draft = text;
@@ -87,12 +89,11 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
     const token = ++generation;
     const next = draft;
     options.onDraftChange(false);
-    if (next === options.sourceText) { release(); return; }
+    if (next === options.sourceText) { release(); options.onFinish?.(); return; }
     const current = () => alive && token === generation && !composing && !options.isFocused();
     const rejected = (reason: string) => {
       if (!current()) return;
       options.onRestricted(reason, next);
-      if (current()) restoreChildren();
     };
     // Invoke immediately on an ordinary blur: Ctrl+S relies on this synchronous
     // handoff. Only composition completion needs the frame/task settling window.
@@ -100,13 +101,24 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
       void options.onCommit(next).then(accepted => {
         if (!current()) return;
         if (!accepted) options.onRestricted('正文输入尚未应用，请在源码中继续。', next);
-        // Draft ownership was handed off above. A different block may now
-        // own the app's draft flag, so completion only restores these children.
-        if (current()) restoreChildren();
-      }, () => rejected('正文输入尚未应用，请保留输入并重试。')).finally(release);
+      }, () => rejected('正文输入尚未应用，请保留输入并重试。')).finally(() => {
+        release();
+        // Draft ownership was handed off above. A different block may now own
+        // the app's draft flag, so completion only restores these children.
+        if (current()) {
+          restoreChildren();
+          options.onFinish?.();
+        }
+      });
     } catch {
       try { rejected('正文输入尚未应用，请保留输入并重试。'); }
-      finally { release(); }
+      finally {
+        release();
+        if (current()) {
+          restoreChildren();
+          options.onFinish?.();
+        }
+      }
     }
   };
   const scheduleFinish = () => {

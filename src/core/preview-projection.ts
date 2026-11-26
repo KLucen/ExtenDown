@@ -1,3 +1,4 @@
+import type { Element, Root } from 'hast';
 import { extensionsFromSnapshot } from './markdown-reading.ts';
 import { parseMarkdownSnapshot } from './markdown-snapshot.ts';
 import { readingRenderFromSnapshot } from './reading-render.ts';
@@ -9,17 +10,29 @@ export function buildPreviewProjection(source: string, options: ReadingOptions =
   const math = hasMathExtension(options);
   const snapshot = parseMarkdownSnapshot(source, { math });
   const outline = sectionsFromSnapshot(snapshot);
-  const fragments = sectionFragmentIds(outline);
+  const headingFragments = sectionFragmentIds(outline);
   const headingIds = new Map(outline.sections.map((section, index) => [
     section.headingRange.start - snapshot.bomOffset,
-    fragments[index],
+    headingFragments[index],
   ]));
+  const renderTree = applyReadingExtensions(readingRenderFromSnapshot(snapshot), snapshot, options);
+  const fragments = new Set(headingFragments);
+  function collectFootnotes(parent: Root | Element) {
+    for (const node of parent.children) {
+      if (node.type !== 'element') continue;
+      const id = node.properties.id;
+      if (typeof id === 'string' && id.startsWith('extendown:note-')) fragments.add(id);
+      collectFootnotes(node);
+    }
+  }
+  collectFootnotes(renderTree);
 
   return {
-    renderTree: applyReadingExtensions(readingRenderFromSnapshot(snapshot), snapshot, options),
+    snapshot,
+    renderTree,
     unsupportedExtensions: extensionsFromSnapshot(snapshot),
     headingIds,
-    fragments: new Set(fragments),
+    fragments,
   };
 }
 
@@ -27,7 +40,9 @@ export function buildPreviewProjection(source: string, options: ReadingOptions =
 export function resolvePreviewFragment(href: string | undefined, fragments: ReadonlySet<string>): string | null {
   if (!href?.startsWith('#') || href.length === 1) return null;
   try {
-    const fragment = decodeURIComponent(href.slice(1));
+    const encoded = href.slice(1);
+    if (fragments.has(encoded)) return encoded;
+    const fragment = decodeURIComponent(encoded);
     return fragments.has(fragment) ? fragment : null;
   } catch {
     return null;

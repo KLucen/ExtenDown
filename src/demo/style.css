@@ -126,6 +126,15 @@ dialog::backdrop { background: #14221c55; }
 .setting-action:hover { border-color: var(--accent); }
 .component-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; padding: 8px 10px 12px; margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 5px; }
 .component-options .setting-action { grid-column: 1 / -1; margin-top: 4px; }
+.plugin-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.plugin-filters input { flex: 1 1 12rem; min-width: 0; }
+.plugin-filters :is(input, select) { padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.component-group { grid-template-columns: 1fr; }
+.component-choice { display: flex; gap: 8px; align-items: start; }
+.component-choice input { margin-top: 5px; accent-color: var(--accent); }
+.component-choice strong { font-weight: 600; }
+.component-choice small:last-child { display: block; }
+.extension-hints { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-block-end: 12px; }
 .plugin-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .plugin-row > span, .plugin-row > label { overflow: hidden; text-overflow: ellipsis; }
 .script-plugin { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }

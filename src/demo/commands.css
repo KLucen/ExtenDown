@@ -1,0 +1,42 @@
+.command-palette {
+  width: min(calc(100% - 28px), 560px); max-height: min(75vh, 590px); padding: 0;
+  margin-block-start: max(32px, 12vh); box-shadow: 0 16px 44px #12201936;
+}
+.command-palette-search { padding: 12px 16px 8px; }
+.command-palette-search input, .shortcut-settings-header input {
+  min-width: 0; width: 100%; padding: 7px 9px; border: 1px solid var(--line);
+  border-radius: 4px; background: var(--surface);
+}
+.command-palette-results { max-height: min(48vh, 420px); overflow: auto; padding: 0 9px 9px; }
+.command-palette-results button {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%;
+  padding: 8px; border-radius: 4px; background: transparent; text-align: start;
+}
+.command-palette-results button[data-active="true"] { background: var(--surface-muted); }
+.command-palette-results button[aria-disabled="true"] { color: var(--text-muted); cursor: default; }
+.command-palette-results small, .shortcut-settings-row small { display: block; color: var(--text-muted); font-size: 11px; }
+.command-palette-results kbd, .source-command-menu kbd { white-space: nowrap; color: var(--text-muted); font: 11px var(--mono); }
+.command-empty { margin: 10px 16px 18px; color: var(--text-muted); }
+.shortcut-settings-header, .shortcut-settings-row { display: flex; align-items: center; gap: 7px; }
+.shortcut-settings-header > button, .shortcut-settings-row > button { flex: none; }
+.shortcut-settings-row { flex-wrap: wrap; padding-block: 5px; border-top: 1px solid var(--line); }
+.shortcut-settings-row > span { flex: 1 1 110px; }
+.shortcut-settings-row [aria-pressed="true"] { border-color: var(--accent); }
+.command-search-bar { flex-wrap: wrap; }
+.command-search-replace { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; flex-basis: 100%; }
+.command-search-status { flex: 1; color: var(--text-muted); }
+.command-search-close { margin-inline-start: auto; }
+.source-command-toolbar, .source-command-menu {
+  position: fixed; z-index: 5; padding: 4px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); box-shadow: 0 7px 24px #1220192b;
+}
+.source-command-toolbar { display: flex; align-items: center; gap: 3px; }
+.source-command-toolbar button, .source-command-menu button {
+  border-radius: 4px; padding: 4px 7px; background: transparent; white-space: nowrap;
+}
+.source-command-toolbar button:hover:not(:disabled), .source-command-menu button:hover:not(:disabled),
+.source-command-menu [role="menuitem"]:focus { background: var(--surface-muted); color: var(--accent); }
+.source-command-menu { width: min(220px, calc(100vw - 12px)); max-height: min(490px, calc(100vh - 12px)); overflow: auto; }
+.source-command-menu [role="menuitem"] { display: flex; justify-content: space-between; gap: 10px; width: 100%; text-align: start; }
+.source-command-menu [role="group"] + [role="group"] { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line); }
+.source-command-menu small { display: block; padding: 3px 7px 1px; color: var(--text-muted); font-size: 11px; }

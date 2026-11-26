@@ -29,6 +29,18 @@
     "allow-open-plugin-package",
     "allow-set-default-markdown-app",
     "allow-save-export",
-    "allow-installed-components"
+    "allow-installed-components",
+    "allow-choose-workspace",
+    "allow-close-workspace",
+    "allow-workspace-list",
+    "allow-workspace-open",
+    "allow-workspace-current-file",
+    "allow-workspace-initial-location",
+    "allow-workspace-create",
+    "allow-workspace-rename",
+    "allow-workspace-trash",
+    "allow-workspace-reveal",
+    "allow-workspace-search",
+    "allow-workspace-check-links"
   ]
 }

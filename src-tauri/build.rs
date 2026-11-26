@@ -20,6 +20,18 @@ fn main() {
             "set_default_markdown_app",
             "save_export",
             "installed_components",
+            "choose_workspace",
+            "close_workspace",
+            "workspace_list",
+            "workspace_open",
+            "workspace_current_file",
+            "workspace_initial_location",
+            "workspace_create",
+            "workspace_rename",
+            "workspace_trash",
+            "workspace_reveal",
+            "workspace_search",
+            "workspace_check_links",
         ]),
     ))
     .expect("failed to generate ExtenDown permissions");

@@ -57,8 +57,9 @@ async function requireEnabled(record: ScriptPluginRecord) {
   return current;
 }
 
-export function ScriptCommands({ records, readDocument, replaceText, history, onRunEntry, onClose }: {
+export function ScriptCommands({ records, readDocument, replaceText, history, onRunEntry, onClose, initialCommand }: {
   records: readonly ScriptPluginRecord[];
+  initialCommand?: string;
   readDocument: () => ScriptDocument | null;
   replaceText: (source: string) => boolean;
   history: readonly ScriptRunEntry[];
@@ -68,7 +69,8 @@ export function ScriptCommands({ records, readDocument, replaceText, history, on
   const dialog = useRef<HTMLDialogElement>(null);
   const running = useRef<AbortController | null>(null);
   const selectedPlugin = useRef<ScriptPluginRecord | null>(null);
-  const [command, setCommand] = useState('');
+  const started = useRef(false);
+  const [command, setCommand] = useState(initialCommand ?? '');
   const [busy, setBusy] = useState(false);
   const [applying, setApplying] = useState(false);
   const [candidate, setCandidate] = useState<Candidate | null>(null);
@@ -80,7 +82,7 @@ export function ScriptCommands({ records, readDocument, replaceText, history, on
 
   useEffect(() => {
     const element = dialog.current;
-    element?.showModal();
+    if (element && !element.open) element.showModal();
     return () => { running.current?.abort(); };
   }, []);
 
@@ -100,7 +102,7 @@ export function ScriptCommands({ records, readDocument, replaceText, history, on
 
   const commands = records.filter(record => record.enabled).flatMap(record =>
     record.current.manifest.contributes.map(id => ({ id, record })));
-  const selected = commands.find(item => item.id === command) ?? commands[0];
+  const selected = commands.find(item => item.id === command) ?? (command === initialCommand ? undefined : commands[0]);
 
   async function run() {
     if (!selected || running.current || applying) return;
@@ -143,6 +145,17 @@ export function ScriptCommands({ records, readDocument, replaceText, history, on
       }
     }
   }
+
+  useEffect(() => {
+    if (!initialCommand || selected?.id !== initialCommand) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active || started.current) return;
+      started.current = true;
+      void run();
+    });
+    return () => { active = false; };
+  }, [initialCommand, selected?.id]);
 
   async function apply() {
     if (applying || !candidate?.document || candidate.result.source === undefined) return;
@@ -194,7 +207,7 @@ export function ScriptCommands({ records, readDocument, replaceText, history, on
           {commands.map(item => <option key={item.id} value={item.id}>{item.record.current.manifest.name} · {item.id}</option>)}
         </select></label>
         <div className="dialog-actions">
-          <button className="setting-action" type="button" disabled={busy || applying} onClick={() => void run()}>运行</button>
+          <button className="setting-action" type="button" disabled={!selected || busy || applying} onClick={() => void run()}>运行</button>
           {busy && <button className="setting-action" type="button" onClick={() => {
             running.current?.abort();
             setStatus('已取消命令。');

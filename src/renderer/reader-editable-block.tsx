@@ -12,6 +12,10 @@ interface ReaderEditableBlockProps {
   readonly onDraftChange: (dirty: boolean) => void;
   readonly onActivityChange: (kind: 'composing' | 'committing', active: boolean) => void;
   readonly onRestricted: (blockStart: number, reason: string, draftText?: string) => void;
+  readonly onStart?: () => void;
+  readonly onFinish?: () => void;
+  readonly onCancel?: () => void;
+  readonly onFormatKey?: (event: KeyboardEvent<HTMLElement>) => boolean;
   readonly children: ReactNode;
   readonly className?: string;
   readonly id?: string;
@@ -47,6 +51,10 @@ export function ReaderEditableBlock({
   onDraftChange,
   onActivityChange,
   onRestricted,
+  onStart,
+  onFinish,
+  onCancel,
+  onFormatKey,
   children,
   className,
   id,
@@ -62,8 +70,9 @@ export function ReaderEditableBlock({
   const retainedDraftRef = useRef(true);
   const sourceIdentityRef = useRef({ documentKey, as, blockStart, sourceText, id });
   const sessionRef = useRef<ReturnType<typeof createReaderEditSession> | null>(null);
-  const callbacks = useRef({ onCommit, onDraftChange, onRestricted });
-  callbacks.current = { onCommit, onDraftChange, onRestricted };
+  const callbacks = useRef({ onCommit, onDraftChange, onRestricted, onFinish });
+  callbacks.current = { onCommit, onDraftChange, onRestricted, onFinish };
+  const caret = useRef<Range | null>(null);
   useLayoutEffect(() => {
     const previous = sourceIdentityRef.current;
     const replaced = previous.documentKey !== documentKey || previous.as !== as ||
@@ -89,7 +98,7 @@ export function ReaderEditableBlock({
       onCommit: text => callbacks.current.onCommit(blockStart, sourceText, text),
       onDraftChange: dirty => callbacks.current.onDraftChange(dirty),
       onRestricted: (reason, text) => callbacks.current.onRestricted(blockStart, reason, text),
-      // Only own committing leases. Window capture owns composing activity.
+      onFinish: () => callbacks.current.onFinish?.(),
       onCommittingChange: active => onActivityChange('committing', active),
       scheduler: {
         frame: run => { const frame = requestAnimationFrame(run); return () => cancelAnimationFrame(frame); },
@@ -97,6 +106,20 @@ export function ReaderEditableBlock({
       },
     });
     sessionRef.current = session;
+    const element = elementRef.current;
+    if (onStart && element && document.activeElement !== element) {
+      element.focus({ preventScroll: true });
+      const selection = window.getSelection();
+      const range = caret.current;
+      if (range && element.contains(range.startContainer)) {
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      } else {
+        selection?.selectAllChildren(element);
+        selection?.collapseToEnd();
+      }
+      caret.current = null;
+    }
     // Adopt a paused draft even if disabling moved focus away. Its ownership
     // must survive another pause; this does not move the DOM focus or caret.
     if ((nativeMutationRef.current && retainedDraftRef.current) || document.activeElement === elementRef.current) session.focus();
@@ -105,7 +128,7 @@ export function ReaderEditableBlock({
       session.dispose();
       if (sessionRef.current === session) sessionRef.current = null;
     };
-  }, [documentKey, as, blockStart, sourceText, enabled, id, onActivityChange]);
+  }, [documentKey, as, blockStart, sourceText, enabled, id, onActivityChange, Boolean(onStart)]);
 
   const handlePaste = (event: ClipboardEvent<HTMLElement>) => {
     event.preventDefault();
@@ -135,7 +158,12 @@ export function ReaderEditableBlock({
     if (event.key === 'Escape') {
       event.preventDefault();
       sessionRef.current?.restore();
-      elementRef.current?.blur();
+      onCancel?.();
+      onFinish?.();
+      return;
+    }
+    if (onFormatKey?.(event)) {
+      event.preventDefault();
       return;
     }
   };
@@ -146,21 +174,29 @@ export function ReaderEditableBlock({
     id: headingId ?? id,
     'aria-labelledby': headingId,
     tabIndex,
-    className: [className, enabled ? 'reader-editable-block' : undefined].filter(Boolean).join(' ') || undefined,
-    contentEditable: enabled,
+    className: [className, (enabled || onStart) ? 'reader-editable-block' : undefined].filter(Boolean).join(' ') || undefined,
+    contentEditable: enabled ? 'plaintext-only' : false,
     suppressContentEditableWarning: true,
     'data-reader-editable': enabled ? 'true' : undefined,
     'data-source-block-start': blockStart,
-    'aria-description': enabled ? '点击正文直接编辑；换行或复杂编辑可在源码中继续' : undefined,
+    'aria-description': enabled ? '按 Ctrl+Enter 应用修改，按 Escape 取消' : onStart ? '双击或按 Enter 编辑正文' : undefined,
+    onDoubleClick: !enabled && onStart ? (event: React.MouseEvent<HTMLElement>) => {
+      caret.current = document.caretRangeFromPoint(event.clientX, event.clientY);
+      onStart();
+    } : undefined,
     onFocus: enabled ? () => sessionRef.current?.focus() : undefined,
     onCompositionStart: enabled ? () => {
       nativeMutationRef.current = true;
       sessionRef.current?.compositionStart();
+      onActivityChange('composing', true);
     } : undefined,
-    onCompositionEnd: enabled ? () => sessionRef.current?.compositionEnd() : undefined,
+    onCompositionEnd: enabled ? () => {
+      sessionRef.current?.compositionEnd();
+      onActivityChange('composing', false);
+    } : undefined,
     onBeforeInput: (event: FormEvent<HTMLElement>) => {
       if (!enabled) { event.preventDefault(); return; }
-      const inputType = (event.nativeEvent as InputEvent).inputType;
+      const inputType = (event.nativeEvent as InputEvent).inputType ?? '';
       if (!sessionRef.current?.composing() && (inputType === 'insertParagraph' || inputType === 'insertLineBreak' || inputType.startsWith('format'))) {
         event.preventDefault();
         onRestricted(blockStart, inputType.startsWith('format')
@@ -173,7 +209,11 @@ export function ReaderEditableBlock({
       sessionRef.current?.input();
     } : undefined,
     onPaste: enabled ? handlePaste : undefined,
-    onKeyDown: enabled ? handleKeyDown : undefined,
+    onKeyDown: enabled ? handleKeyDown : onStart ? (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+      event.preventDefault();
+      onStart();
+    } : undefined,
     onBlur: () => sessionRef.current?.blur(),
   }, children);
 }

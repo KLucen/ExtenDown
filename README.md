@@ -6,12 +6,16 @@ ExtenDown 是基于 Tauri v2 的本地 Markdown 编辑器。左侧可折叠侧�
 
 - 从「文件」新建文档或窗口，打开 `.md`、`.markdown`、`.txt`，保存或另存为。桌面版也可直接拖入文件。同一路径已打开时，应用切换到现有窗口。
 - 从「文件 → 最近打开」返回已有文档，从「文件 → 恢复草稿」找回未保存的内容。目标文件被外部修改时，可以从磁盘重新载入或另存当前草稿。
+- 从桌面顶栏「工作区」选择本地文件夹。文件树按展开层级加载，可查找已保存的文件内容、检查相对链接，以及从文件行菜单新建、重命名或移到回收站。
+- 在「并排」视图底部可切换同步滚动；「预览」的查找只选中排版文本，不改动源码。编辑权限不足或链接无法校验时可跳到相应源码位置。
 - 预览支持 CommonMark、GFM 表格和任务列表、常见语言的围栏代码高亮、授权范围内的相对图片，以及可选的数学公式和 Mermaid 图表。
+- 从预览进入「编辑正文」，可就地修改普通段落或标题，勾选任务并编辑表格。修改进入同一份 Markdown 草稿，可跨视图撤销。源码区提供选区工具条、查找替换及代码围栏语言建议。
+- 从顶栏「命令」搜索内置或已授权的插件操作。在「设置 → 快捷键」可更改绑定和恢复默认。
 - 在「设置 → 插件」按需启停已安装的扩展，或用「安装插件文件」加载数据型 `.edplugin` 主题包，再到「设置 → 常规 → 外观」选择主题。
 - 同一入口可安装第三方命令插件。核对权限并启用版本后，从顶栏「命令」运行。审阅并应用的文档变更进入撤销历史。[命令插件开发指南](docs/PLUGIN-DEVELOPMENT.zh-CN.md)
 - 从顶栏「导出」生成 HTML、PDF、PNG 或 JPG。HTML 可离线打开，PDF 以图像分页，PNG 和 JPG 可输出单张图或分段图片 ZIP。
 
-Windows 的 NSIS 安装器默认安装到 `%LOCALAPPDATA%\extendown\app`，可在向导中修改路径。安装器可选择安装官方导出、语法、视图、语言和主题扩展，并将 ExtenDown 注册为 `.md` 和 `.markdown` 的候选应用。安装后，在「设置 → 常规 → 选择 .md 默认应用」打开 Windows 系统设置，再按扩展名选择 ExtenDown。
+Windows 的 NSIS 安装器默认安装到 `%LOCALAPPDATA%\extendown\app`，可在向导中修改路径。可选扩展按用途分组，支持「精简」「推荐」和单项勾选。应用内通过「设置 → 插件」搜索并按分类或状态筛选。安装器将 ExtenDown 注册为 `.md` 和 `.markdown` 的候选应用，安装后可从「设置 → 常规 → 选择 .md 默认应用」打开 Windows 系统设置。
 
 ## 开发与构建
 
@@ -40,4 +44,4 @@ npm run tauri -- build --bundles nsis -- --locked
 
 最后两条命令分别生成便携桌面程序和 Windows NSIS 安装器，产物位于 `src-tauri/target/release/` 及其 `bundle/nsis/` 子目录。复制便携版时将 `extendown.exe` 与 `extendown-components/` 放在同一目录。文件关联注册由 NSIS 安装器处理。
 
-桌面接入和主题包格式见 [Tauri 接入指南](docs/TAURI-GUIDE.zh-CN.md)。测试范围和环境见 [验收记录](docs/VERIFICATION.zh-CN.md)。产品路线和复用来源见 [首版设计方案](docs/INITIAL_DESIGN.zh-CN.md) 与 [来源清单](PROVENANCE.md)。
+桌面接入和主题包格式见 [Tauri 接入指南](docs/TAURI-GUIDE.zh-CN.md)。测试范围和环境见 [验收记录](docs/VERIFICATION.zh-CN.md)。产品路线和复用来源见 [编辑体验优化方案](docs/EDITOR-ROADMAP.zh-CN.md)、[首版设计方案](docs/INITIAL_DESIGN.zh-CN.md) 与 [来源清单](PROVENANCE.md)。

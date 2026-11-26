@@ -11,7 +11,7 @@ const READING_HTML_TAGS = [
   'a', 'abbr', 'b', 'bdi', 'bdo', 'blockquote', 'br', 'cite', 'code', 'dd', 'del', 'details',
   'dfn', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'input',
   'ins', 'kbd', 'li', 'mark', 'ol', 'p', 'pre', 'q', 'rp', 'rt', 'ruby', 's', 'samp', 'small',
-  'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'time', 'tr',
+  'section', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'time', 'tr',
   'u', 'ul', 'var', 'wbr',
 ] as const;
 const SAFE_HTML_TAGS = new Set<string>(READING_HTML_TAGS);
@@ -38,7 +38,7 @@ export const readingSanitizeSchema: SanitizeSchema = {
   },
   attributes: {
     '*': ['dir', 'lang', 'title'],
-    a: ['href', 'title'],
+    a: ['href', 'title', 'id', 'ariaLabel', ['className', 'data-footnote-backref']],
     blockquote: ['cite'],
     code: [['className', /^language-/]],
     del: ['cite'],
@@ -46,9 +46,10 @@ export const readingSanitizeSchema: SanitizeSchema = {
     img: ['alt', 'src', 'title'],
     input: [['disabled', true], ['type', 'checkbox'], 'checked'],
     ins: ['cite'],
-    li: [['className', 'task-list-item']],
+    li: ['id', ['className', 'task-list-item']],
     ol: ['start', ['className', 'contains-task-list']],
     q: ['cite'],
+    section: [['className', 'footnotes']],
     span: [
       ['className', 'html-placeholder'],
       ['role', 'note'],
@@ -58,6 +59,7 @@ export const readingSanitizeSchema: SanitizeSchema = {
     time: ['dateTime'],
     ul: [['className', 'contains-task-list']],
   },
+  clobber: ['ariaDescribedBy', 'ariaLabelledBy', 'name'],
 };
 
 function htmlPlaceholder(tagName: string, dangerous: boolean, position: Element['position']): Element {
@@ -75,7 +77,7 @@ function htmlPlaceholder(tagName: string, dangerous: boolean, position: Element[
   };
 }
 
-function applyHtmlPolicy(parent: HastRoot | Element): void {
+function applyHtmlPolicy(parent: HastRoot | Element, footnotes = false): void {
   const children = parent.children as RootContent[];
   for (let index = 0; index < children.length; index += 1) {
     const child = children[index];
@@ -89,7 +91,9 @@ function applyHtmlPolicy(parent: HastRoot | Element): void {
       children[index] = htmlPlaceholder(originalTag, false, child.position);
       continue;
     }
-    if (!SAFE_HTML_TAGS.has(tagName)) {
+    const footnoteSection = tagName === 'section' && !child.position &&
+      Array.isArray(child.properties.className) && child.properties.className.includes('footnotes');
+    if (!SAFE_HTML_TAGS.has(tagName) || (tagName === 'section' && !footnoteSection)) {
       children[index] = htmlPlaceholder(tagName, DANGEROUS_HTML_TAGS.has(tagName), child.position);
       continue;
     }
@@ -99,7 +103,19 @@ function applyHtmlPolicy(parent: HastRoot | Element): void {
       delete child.properties.className;
       delete child.properties.role;
     }
-    applyHtmlPolicy(child);
+    const generatedReference = tagName === 'a' && child.properties.dataFootnoteRef === '' &&
+      typeof child.properties.id === 'string' && child.properties.id.startsWith('extendown:note-fnref-') &&
+      parent.type === 'element' && parent.tagName === 'sup' && child.position?.start.offset === parent.position?.start.offset;
+    const generatedTarget = footnotes && tagName === 'li' && parent.type === 'element' && parent.tagName === 'ol' &&
+      typeof child.properties.id === 'string' && child.properties.id.startsWith('extendown:note-fn-');
+    if (!generatedReference && !generatedTarget) delete child.properties.id;
+    delete child.properties.ariaDescribedBy;
+    if (generatedReference) child.properties.ariaLabel = '查看脚注';
+    if (!generatedReference && !(footnotes && !child.position && child.properties.dataFootnoteBackref === '')) {
+      delete child.properties.ariaLabel;
+      if (tagName === 'a') delete child.properties.className;
+    }
+    applyHtmlPolicy(child, footnotes || footnoteSection);
   }
 }
 

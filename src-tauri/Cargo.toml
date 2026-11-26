@@ -19,6 +19,7 @@ percent-encoding = "2.3.2"
 rfd = "=0.15.4"
 tempfile = "3.27.0"
 tauri-plugin-single-instance = "=2.5.5"
+trash = { version = "=5.4.0", default-features = false, features = ["coinit_apartmentthreaded", "freedesktop"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

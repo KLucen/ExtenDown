@@ -11,6 +11,21 @@ const snapshot = (source, revision = 7) => ({
   dialect: 'commonmark-gfm-frontmatter',
 });
 
+test('Unicode footnotes and repeated return links resolve in offline HTML alongside GFM alignment', () => {
+  const html = renderOfflineHtml(snapshot(
+    '正文[^中文]，再次引用[^中文]。\n\n[^中文]: 脚注内容。\n\n| 左 | 中 | 右 |\n| :-- | :-: | --: |\n| 1 | 2 | 3 |',
+  ));
+  assert.match(html, /<section class="footnotes"><h2>脚注<\/h2>/);
+  assert.match(html, /脚注内容/);
+  const ids = new Set([...html.matchAll(/ id="([^"]+)"/gu)].map(match => match[1]));
+  const links = [...html.matchAll(/ href="#([^"]+)"/gu)];
+  assert.equal(links.length, 4);
+  for (const [, fragment] of links) assert.ok(ids.has(decodeURIComponent(fragment)), fragment);
+  for (const [cell, align] of [['左', 'left'], ['中', 'center'], ['右', 'right']]) {
+    assert.ok(html.includes(`<th style="text-align:${align}">${cell}</th>`));
+  }
+});
+
 test('offline HTML export is deterministic, self-contained, and keeps the document revision', async () => {
   const source = '# 中文标题\n\n**重点**\n\n| A | B |\n| --- | --- |\n| 中文 | 😀 |\n\n```ts\nconst value = 1;\n```\n';
   const first = renderOfflineHtml(snapshot(source));

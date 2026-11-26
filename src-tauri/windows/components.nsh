@@ -3,6 +3,7 @@
 
 !define EXTENDOWN_FILES "${__FILEDIR__}\..\target\optional-components"
 !include "${EXTENDOWN_FILES}\component-files.nsh"
+!include "${EXTENDOWN_FILES}\component-catalog.nsh"
 !define EXTENDOWN_INSTALL_CHOICES "Software\ExtenDown\InstallerChoices"
 
 Var componentsInitialized
@@ -11,14 +12,7 @@ Var componentsInitialized
   Var pick_${group}
   Var check_${group}
 !macroend
-!insertmacro ExtendownDeclare html
-!insertmacro ExtendownDeclare math
-!insertmacro ExtendownDeclare mermaid
-!insertmacro ExtendownDeclare focus
-!insertmacro ExtendownDeclare pdf
-!insertmacro ExtendownDeclare images
-!insertmacro ExtendownDeclare languages
-!insertmacro ExtendownDeclare theme
+!insertmacro EXTENDOWN_COMPONENT_DECLARE
 
 !macro ExtendownLoadChoice group
   ClearErrors
@@ -30,25 +24,37 @@ Var componentsInitialized
 
 Function ExtendownLoadChoices
   ${If} $componentsInitialized == ""
-    !insertmacro ExtendownLoadChoice html
-    !insertmacro ExtendownLoadChoice math
-    !insertmacro ExtendownLoadChoice mermaid
-    !insertmacro ExtendownLoadChoice focus
-    !insertmacro ExtendownLoadChoice pdf
-    !insertmacro ExtendownLoadChoice images
-    !insertmacro ExtendownLoadChoice languages
-    !insertmacro ExtendownLoadChoice theme
+    !insertmacro EXTENDOWN_COMPONENT_LOAD
     StrCpy $componentsInitialized 1
   ${EndIf}
 FunctionEnd
 
-!macro ExtendownCheckbox group label offset
-  ${NSD_CreateCheckbox} 0 ${offset} 100% 11u "${label}"
+!macro ExtendownCheckbox group label left offset
+  ${NSD_CreateCheckbox} ${left} ${offset} 48% 12u "${label}"
   Pop $check_${group}
   ${If} $pick_${group} = 1
     ${NSD_Check} $check_${group}
   ${EndIf}
 !macroend
+
+!macro ExtendownCategory label left offset
+  ${NSD_CreateLabel} ${left} ${offset} 48% 11u "${label}"
+  Pop $0
+!macroend
+
+!macro ExtendownSetCheck group enabled
+  ${NSD_SetState} $check_${group} ${enabled}
+!macroend
+
+Function ExtendownMinimal
+  Pop $0
+  !insertmacro EXTENDOWN_COMPONENT_MINIMAL
+FunctionEnd
+
+Function ExtendownRecommended
+  Pop $0
+  !insertmacro EXTENDOWN_COMPONENT_RECOMMENDED
+FunctionEnd
 
 Page custom ExtendownComponentsPage ExtendownComponentsLeave
 
@@ -62,20 +68,21 @@ Function ExtendownComponentsPage
     Abort
   ${EndIf}
   Call ExtendownLoadChoices
-  !insertmacro MUI_HEADER_TEXT "Optional components" "Choose the extensions to install with ExtenDown."
+  !insertmacro MUI_HEADER_TEXT "可选组件" "选择要随 ExtenDown 安装的扩展。"
   nsDialogs::Create 1018
   Pop $0
   ${If} $0 == "error"
     Abort
   ${EndIf}
-  !insertmacro ExtendownCheckbox html "HTML export" 3u
-  !insertmacro ExtendownCheckbox math "Mathematical formulas" 18u
-  !insertmacro ExtendownCheckbox mermaid "Mermaid diagrams" 33u
-  !insertmacro ExtendownCheckbox focus "Focus view" 48u
-  !insertmacro ExtendownCheckbox pdf "PDF export" 63u
-  !insertmacro ExtendownCheckbox images "PNG and JPEG export" 78u
-  !insertmacro ExtendownCheckbox languages "Additional code highlighting languages" 93u
-  !insertmacro ExtendownCheckbox theme "Midnight theme" 108u
+  ${NSD_CreateButton} 0 0 52u 14u "精简"
+  Pop $0
+  ${NSD_OnClick} $0 ExtendownMinimal
+  ${NSD_CreateButton} 57u 0 52u 14u "推荐"
+  Pop $0
+  ${NSD_OnClick} $0 ExtendownRecommended
+  ${NSD_CreateLabel} 0 17u 100% 12u "自定义可直接勾选下方组件。"
+  Pop $0
+  !insertmacro EXTENDOWN_COMPONENT_CHECKS
   nsDialogs::Show
 FunctionEnd
 
@@ -84,14 +91,7 @@ FunctionEnd
 !macroend
 
 Function ExtendownComponentsLeave
-  !insertmacro ExtendownReadCheckbox html
-  !insertmacro ExtendownReadCheckbox math
-  !insertmacro ExtendownReadCheckbox mermaid
-  !insertmacro ExtendownReadCheckbox focus
-  !insertmacro ExtendownReadCheckbox pdf
-  !insertmacro ExtendownReadCheckbox images
-  !insertmacro ExtendownReadCheckbox languages
-  !insertmacro ExtendownReadCheckbox theme
+  !insertmacro EXTENDOWN_COMPONENT_READ
 FunctionEnd
 
 !macro ExtendownSaveChoice group
@@ -104,14 +104,7 @@ FunctionEnd
   !insertmacro ExtendownRemoveComponents
   CreateDirectory "$INSTDIR\extendown-components"
   !insertmacro EXTENDOWN_COMPONENT_FILES
-  !insertmacro ExtendownSaveChoice html
-  !insertmacro ExtendownSaveChoice math
-  !insertmacro ExtendownSaveChoice mermaid
-  !insertmacro ExtendownSaveChoice focus
-  !insertmacro ExtendownSaveChoice pdf
-  !insertmacro ExtendownSaveChoice images
-  !insertmacro ExtendownSaveChoice languages
-  !insertmacro ExtendownSaveChoice theme
+  !insertmacro EXTENDOWN_COMPONENT_SAVE
   SetOutPath "$INSTDIR"
 !macroend
 

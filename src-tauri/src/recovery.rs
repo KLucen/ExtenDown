@@ -148,6 +148,29 @@ pub fn remember(directory: &Path, path: &Path) -> CommandResult<()> {
     publish(&target, &bytes, target.is_file(), || Ok(())).map_err(|_| "recent-write-failed")
 }
 
+pub fn retarget_recent(directory: &Path, original: &Path, target: &Path) -> CommandResult<()> {
+    let mut entries = recent(directory);
+    let mut changed = false;
+    for entry in &mut entries {
+        let Ok(suffix) = entry.path.strip_prefix(original) else {
+            continue;
+        };
+        entry.path = if suffix.as_os_str().is_empty() {
+            target.to_owned()
+        } else {
+            target.join(suffix)
+        };
+        entry.name = filename(&entry.path);
+        changed = true;
+    }
+    if changed {
+        let path = directory.join("recent.json");
+        let bytes = serde_json::to_vec(&entries).map_err(|_| "recent-write-failed")?;
+        publish(&path, &bytes, true, || Ok(())).map_err(|_| "recent-write-failed")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

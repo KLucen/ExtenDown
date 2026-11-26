@@ -14,11 +14,15 @@ import {
   type ScriptPluginRecord,
 } from '../core/plugins/script-store.ts';
 import { permissionDescriptions, type useScriptPlugins } from './script-commands';
+import { ShortcutSettings, type useShortcuts } from './commands';
+import type { EditorCommand } from '../core/editor-commands';
+import { COMPONENT_CATEGORIES, COMPONENT_PRESETS, EXTENSION_STATE_LABELS, OFFICIAL_COMPONENTS, matchesComponent,
+  type ComponentId, type ComponentCategory, type ExtensionState } from '../core/plugins/component-catalog.ts';
 
 const STORE_KEY = 'extendown.extensions.v1';
 const FORMATS = ['html', 'pdf', 'png', 'jpg'] as const;
-const COMPONENTS = ['html', 'math', 'mermaid', 'focus', 'pdf', 'images', 'languages', 'theme'] as const;
-type Component = typeof COMPONENTS[number];
+const COMPONENTS = OFFICIAL_COMPONENTS.map(item => item.id);
+type Component = ComponentId;
 const FULL_COMPONENTS = new Set<Component>(COMPONENTS);
 const NO_COMPONENTS = new Set<Component>();
 const OFFICIAL_THEME_ID = 'org.extendown.theme.midnight';
@@ -205,36 +209,83 @@ function componentForFormat(format: ExportFormat): Component {
 
 type Extensions = ReturnType<typeof useExtensions>;
 
-function Components({ plugins, onDone }: { plugins: Extensions; onDone?: () => void }) {
+function officialEnabled(prefs: Preferences, id: Component, format?: ExportFormat): boolean {
+  if (id === 'focus') return prefs.presentation;
+  if (id === 'theme') return !prefs.disabledThemes.includes(OFFICIAL_THEME_ID);
+  if (id === 'math' || id === 'mermaid' || id === 'languages') return prefs[id];
+  return format ? prefs.formats.includes(format) : prefs.formats.includes('png') || prefs.formats.includes('jpg');
+}
+
+function toggleOfficial(prefs: Preferences, id: Component, enabled: boolean, format?: ExportFormat): Preferences {
+  if (id === 'focus') return { ...prefs, presentation: enabled };
+  if (id === 'theme') return { ...prefs, disabledThemes: enabled
+    ? prefs.disabledThemes.filter(item => item !== OFFICIAL_THEME_ID)
+    : [...new Set([...prefs.disabledThemes, OFFICIAL_THEME_ID])] };
+  if (id === 'math' || id === 'mermaid' || id === 'languages') return { ...prefs, [id]: enabled };
+  return { ...prefs, formats: FORMATS.filter(item => (format ? item === format : componentForFormat(item) === id)
+    ? enabled : prefs.formats.includes(item)) };
+}
+
+interface PluginFilter {
+  query: string;
+  category: 'all' | ComponentCategory;
+  state: 'all' | Exclude<ExtensionState, 'loading'>;
+}
+
+function Components({ plugins, filter, onDone }: { plugins: Extensions; filter?: PluginFilter; onDone?: () => void }) {
   const prefs = plugins.preferences;
-  return <fieldset className="component-options">
-    <legend>可选扩展</legend>
-    <label><input type="checkbox" checked={plugins.components.has('math') && prefs.math} disabled={!plugins.components.has('math')} onChange={event => {
-      const checked = event.target.checked;
-      plugins.update(state => ({ ...state, math: checked }));
-    }} /> 数学公式</label>
-    <label><input type="checkbox" checked={plugins.components.has('mermaid') && prefs.mermaid} disabled={!plugins.components.has('mermaid')} onChange={event => {
-      const checked = event.target.checked;
-      plugins.update(state => ({ ...state, mermaid: checked }));
-    }} /> Mermaid 图表</label>
-    <label><input type="checkbox" checked={plugins.components.has('languages') && prefs.languages} disabled={!plugins.components.has('languages')} onChange={event => {
-      const checked = event.target.checked;
-      plugins.update(state => ({ ...state, languages: checked }));
-    }} /> 扩展代码语言</label>
-    <label><input type="checkbox" checked={plugins.components.has('focus') && prefs.presentation} disabled={!plugins.components.has('focus')} onChange={event => {
-      const checked = event.target.checked;
-      plugins.update(state => ({ ...state, presentation: checked }));
-    }} /> 专注视图</label>
-    {FORMATS.map(format => <label key={format}><input type="checkbox" checked={plugins.components.has(componentForFormat(format)) && prefs.formats.includes(format)}
-      disabled={!plugins.components.has(componentForFormat(format))} onChange={event => {
-      const checked = event.target.checked;
-      plugins.update(state => ({ ...state, formats: FORMATS.filter(item => item === format ? checked : state.formats.includes(item)) }));
-    }} /> {format.toUpperCase()} 导出</label>)}
-    {plugins.componentsReady && COMPONENTS.some(component => !plugins.components.has(component)) &&
-      <small>可通过 Windows 安装器添加缺少的官方组件。</small>}
+  const choices = OFFICIAL_COMPONENTS.flatMap(item => {
+    const formats: readonly (ExportFormat | undefined)[] = item.id === 'images' && !onDone ? ['png', 'jpg'] : [undefined];
+    return formats.map(format => {
+      const installed = plugins.components.has(item.id);
+      const enabled = officialEnabled(prefs, item.id, format ?? (item.id === 'html' || item.id === 'pdf' ? item.id : undefined));
+      const state: ExtensionState = !plugins.componentsReady ? 'loading' : !installed ? 'missing' : enabled ? 'enabled' : 'disabled';
+      const label = format ? format.toUpperCase() + ' 导出' : item.name;
+      return { ...item, format, label, installed, enabled, state };
+    });
+  }).filter(item => onDone
+    ? item.installed : !filter || (filter.category === 'all' || item.category === filter.category) &&
+      (filter.state === 'all' || filter.state === item.state) &&
+      matchesComponent(filter.query, item.label, item.name, item.aliases, item.id, item.description));
+  function applyPreset(preset: keyof typeof COMPONENT_PRESETS) {
+    const selected = COMPONENT_PRESETS[preset];
+    const changed = OFFICIAL_COMPONENTS.filter(item => {
+      if (!plugins.components.has(item.id)) return false;
+      const enabled = selected.includes(item.id);
+      if (item.id === 'images') return (['png', 'jpg'] as const).some(format => prefs.formats.includes(format) !== enabled);
+      return officialEnabled(prefs, item.id, item.id === 'html' || item.id === 'pdf' ? item.id : undefined) !== enabled;
+    });
+    if (!changed.length) return;
+    const name = preset === 'minimal' ? '精简' : '推荐';
+    const changes = changed.map(item => item.name + (selected.includes(item.id) ? '启用' : '停用')).join('、');
+    if (window.confirm('应用「' + name + '」配置？\n\n' + changes)) {
+      plugins.update(state => changed.reduce((previous, item) => toggleOfficial(previous, item.id, selected.includes(item.id)), state));
+    }
+  }
+
+  return <>
+    {onDone && <div className="dialog-actions">
+      <button type="button" className="setting-action" disabled={!plugins.componentsReady} onClick={() => applyPreset('minimal')}>精简</button>
+      <button type="button" className="setting-action" disabled={!plugins.componentsReady} onClick={() => applyPreset('recommended')}>推荐</button>
+      <small>可单独勾选以自定义。</small>
+    </div>}
+    {Object.entries(COMPONENT_CATEGORIES).map(([category, name]) => {
+      const items = choices.filter(item => item.category === category);
+      return items.length > 0 && <fieldset className="component-options component-group" key={category}>
+        <legend>{name}</legend>
+        {items.map(item => <label className="component-choice" key={item.format ?? item.id}>
+          <input type="checkbox" checked={item.installed && item.enabled} disabled={!item.installed} onChange={event => {
+            const checked = event.target.checked;
+            plugins.update(state => toggleOfficial(state, item.id, checked, item.format));
+          }} />
+          <span><strong>{item.label}</strong> <small>{EXTENSION_STATE_LABELS[item.state]}</small><small>{item.description}</small></span>
+        </label>)}
+      </fieldset>;
+    })}
+    {!onDone && choices.some(item => item.state === 'missing') && <small>可重新运行 Windows 安装器补装缺少的官方组件。</small>}
     {plugins.extensionError && <p className="error" role="alert">{plugins.extensionError}</p>}
     {onDone && <button type="button" className="setting-action" disabled={!plugins.componentsReady} onClick={onDone}>开始使用</button>}
-  </fieldset>;
+  </>;
 }
 
 export function FirstRun({ plugins, onClose }: { plugins: Extensions; onClose: () => void }) {
@@ -244,7 +295,7 @@ export function FirstRun({ plugins, onClose }: { plugins: Extensions; onClose: (
     plugins.update(state => ({ ...state, configured: true }));
     dialog.current?.close();
   }
-  return <dialog className="settings-modal" ref={dialog} aria-labelledby="components-title" onClose={onClose}
+  return <dialog className="settings-modal first-run-modal" ref={dialog} aria-labelledby="components-title" onClose={onClose}
     onCancel={event => { event.preventDefault(); finish(); }}>
     <div className="modal-head"><h2 id="components-title">选择扩展</h2></div>
     <div className="settings-section">
@@ -254,7 +305,7 @@ export function FirstRun({ plugins, onClose }: { plugins: Extensions; onClose: (
   </dialog>;
 }
 
-export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, onClose, launchDefaults }: {
+export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, onClose, launchDefaults, shortcuts, commands, initialTab = 'general', pluginQuery = '' }: {
   desktop: boolean;
   plugins: Extensions;
   scripts: ReturnType<typeof useScriptPlugins>;
@@ -262,13 +313,18 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
   onDiscardDraft: (id: string) => Promise<void>;
   onClose: () => void;
   launchDefaults: () => Promise<{ supported: boolean; requested: boolean; message: string }>;
+  shortcuts: ReturnType<typeof useShortcuts>;
+  commands: readonly EditorCommand[];
+  initialTab?: 'general' | 'plugins' | 'shortcuts';
+  pluginQuery?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [packageBusy, setPackageBusy] = useState(false);
-  const [tab, setTab] = useState<'general' | 'plugins'>('general');
+  const [tab, setTab] = useState(initialTab);
+  const [filter, setFilter] = useState<PluginFilter>({ query: pluginQuery, category: 'all', state: 'all' });
   useEffect(() => { dialog.current?.showModal(); }, []);
 
   async function install(buffer: ArrayBuffer) {
@@ -358,13 +414,23 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
 
   const selectedTheme = [DARK_THEME, ...plugins.themes].some(theme => theme.id === plugins.preferences.theme)
     ? plugins.preferences.theme : 'core.light';
+  const visibleThemes = plugins.preferences.packages.filter(item =>
+    (filter.category === 'all' || filter.category === 'appearance') &&
+    (filter.state === 'all' || filter.state === (plugins.preferences.disabledThemes.includes(item.manifest.id) ? 'disabled' : 'enabled')) &&
+    matchesComponent(filter.query, item.manifest.name, item.manifest.id, '主题 theme'));
+  const visibleScripts = scripts.records.filter(record =>
+    (filter.category === 'all' || filter.category === 'command') &&
+    (filter.state === 'all' || filter.state === (record.enabled ? 'enabled' : 'disabled')) &&
+    matchesComponent(filter.query, record.current.manifest.name, record.current.manifest.id, ...record.current.manifest.contributes));
   return <dialog className="settings-modal" ref={dialog} aria-labelledby="settings-title" onClose={onClose}>
     <div className="modal-head"><h2 id="settings-title">设置</h2>
       <button type="button" aria-label="关闭设置" onClick={() => dialog.current?.close()}>×</button>
     </div>
     <div className="settings-tabs" aria-label="设置类别">
-      <button type="button" aria-pressed={tab === 'general'} onClick={() => setTab('general')}>常规</button>
-      <button type="button" aria-pressed={tab === 'plugins'} onClick={() => setTab('plugins')}>插件</button>
+      {(['general', 'plugins', 'shortcuts'] as const).map(value =>
+        <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>
+          {{ general: '常规', plugins: '插件', shortcuts: '快捷键' }[value]}
+        </button>)}
     </div>
     {tab === 'general' ? <>
       <section className="settings-section">
@@ -390,23 +456,34 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
           }}>移除</button>
         </div>)}
       </section>}
-    </> : <section className="settings-section">
-      <Components plugins={plugins} />
-      <h3>主题包</h3>
-      {plugins.components.has('theme') && <div className="plugin-row">
-        <label><input type="checkbox" checked={!plugins.preferences.disabledThemes.includes(OFFICIAL_THEME_ID)}
-          onChange={event => toggleTheme(OFFICIAL_THEME_ID, event.target.checked)} /> Midnight</label>
-        <small>官方示例</small>
-      </div>}
-      {plugins.preferences.packages.map(item => <div className="plugin-row" key={item.manifest.id}>
+    </> : tab === 'shortcuts' ? <section className="settings-section">
+      <ShortcutSettings shortcuts={shortcuts} commands={commands} />
+    </section> : <section className="settings-section">
+      <div className="plugin-filters">
+        <input aria-label="搜索插件" placeholder="搜索插件，如「流程图」" value={filter.query}
+          onChange={event => setFilter({ ...filter, query: event.target.value })} />
+        <select aria-label="插件分类" value={filter.category}
+          onChange={event => setFilter({ ...filter, category: event.target.value as PluginFilter['category'] })}>
+          <option value="all">全部分类</option>
+          {Object.entries(COMPONENT_CATEGORIES).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select>
+        <select aria-label="插件状态" value={filter.state}
+          onChange={event => setFilter({ ...filter, state: event.target.value as PluginFilter['state'] })}>
+          <option value="all">全部状态</option>
+          {(['enabled', 'disabled', 'missing'] as const).map(state => <option key={state} value={state}>{EXTENSION_STATE_LABELS[state]}</option>)}
+        </select>
+      </div>
+      <Components plugins={plugins} filter={filter} />
+      {visibleThemes.length > 0 && <h3>本地主题</h3>}
+      {visibleThemes.map(item => <div className="plugin-row" key={item.manifest.id}>
         <label><input type="checkbox" checked={!plugins.preferences.disabledThemes.includes(item.manifest.id)}
           onChange={event => toggleTheme(item.manifest.id, event.target.checked)} /> {item.manifest.name}</label>
         <small>v{item.manifest.version} · 本地主题</small>
         <button type="button" onClick={() => removeTheme(item.manifest.id)}>卸载</button>
       </div>)}
-      <h3>第三方命令插件</h3>
+      {visibleScripts.length > 0 && <h3>本地命令</h3>}
       {scripts.error && <p role="alert" className="error">{scripts.error}</p>}
-      {scripts.records.map(record => {
+      {visibleScripts.map(record => {
         const { id, name, version } = record.current.manifest;
         const permissions = permissionDescriptions(record.current);
         return <div className="script-plugin" key={id}>

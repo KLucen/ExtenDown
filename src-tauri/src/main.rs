@@ -4,6 +4,7 @@ mod components;
 mod document;
 mod export;
 mod recovery;
+mod workspace;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use document::{
@@ -75,11 +76,26 @@ fn open_path(
     path: &Path,
     current_window: Option<&str>,
 ) -> CommandResult<Option<OpenedDocument>> {
-    let path = existing_document_path(path)?;
+    open_canonical_path(app, existing_document_path(path)?, current_window, None)
+}
+
+fn open_canonical_path(
+    app: &AppHandle,
+    path: PathBuf,
+    current_window: Option<&str>,
+    line: Option<u32>,
+) -> CommandResult<Option<OpenedDocument>> {
     let mut store = lock_store(app)?;
     if let Some(owner) = store.owner(&path).map(str::to_owned) {
+        let id = store
+            .windows
+            .get(&owner)
+            .map(|session| session.document.document_id.clone());
         drop(store);
         focus_window(app, &owner);
+        if let (Some(id), Some(line)) = (id, line) {
+            workspace::request_location(app, &owner, id, line);
+        }
         return Ok(None);
     }
     let session = DocumentSession::open(path.clone())?;
@@ -89,11 +105,18 @@ fn open_path(
         str::to_owned,
     );
     store.windows.insert(label.clone(), session);
+    if let (None, Some(line)) = (current_window, line) {
+        store
+            .workspace_locations
+            .insert(label.clone(), (document.document_id.clone(), line));
+    }
     remember_path(app, &path);
     drop(store);
     if current_window.is_none() {
         if let Err(error) = create_window(app, &label) {
-            lock_store(app)?.windows.remove(&label);
+            let mut store = lock_store(app)?;
+            store.windows.remove(&label);
+            store.workspace_locations.remove(&label);
             return Err(error);
         }
     }
@@ -244,18 +267,19 @@ async fn save_markdown(
     revision: u64,
 ) -> CommandResult<Option<OpenedDocument>> {
     let app = window.app_handle();
-    let existing = lock_store(app)?
-        .get_mut(window.label(), &document_id)?
-        .document
-        .path
-        .clone();
-    let Some(path) = existing else {
+    let saved = {
+        let mut store = lock_store(app)?;
+        let session = store.get_mut(window.label(), &document_id)?;
+        session
+            .document
+            .path
+            .clone()
+            .map(|path| session.save(path, &source, revision))
+            .transpose()?
+    };
+    let Some(document) = saved else {
         return save_as(&window, Some(&document_id), &source, revision).await;
     };
-    let mut store = lock_store(app)?;
-    let document = store
-        .get_mut(window.label(), &document_id)?
-        .save(path, &source, revision)?;
     if let Ok(directory) = draft_dir(app) {
         let _ = RecoveryDraft::discard(&directory, &document.document_id);
     }
@@ -278,6 +302,9 @@ fn reload_markdown(window: WebviewWindow, document_id: String) -> CommandResult<
     let mut store = lock_store(app)?;
     let previous = store.get_mut(window.label(), &document_id)?;
     let path = previous.document.path.clone().ok_or("document-not-found")?;
+    if path.canonicalize().ok().as_ref() != Some(&path) {
+        return Err("external-change");
+    }
     let refreshed = DocumentSession::open(path)?;
     let document = refreshed.document.clone();
     store.windows.insert(window.label().to_owned(), refreshed);
@@ -499,6 +526,7 @@ fn main() {
     let installed_components = components::configure(&mut context);
     tauri::Builder::default()
         .manage(AppState::default())
+        .manage(workspace::Workspaces::default())
         .manage(installed_components)
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             let paths =
@@ -537,8 +565,12 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {
+                window
+                    .state::<workspace::Workspaces>()
+                    .remove(window.label());
                 if let Ok(mut store) = lock_store(window.app_handle()) {
                     store.windows.remove(window.label());
+                    store.workspace_locations.remove(window.label());
                 }
             }
         })
@@ -562,6 +594,18 @@ fn main() {
             set_default_markdown_app,
             export::save_export,
             components::installed_components,
+            workspace::choose_workspace,
+            workspace::close_workspace,
+            workspace::workspace_list,
+            workspace::workspace_open,
+            workspace::workspace_current_file,
+            workspace::workspace_initial_location,
+            workspace::workspace_create,
+            workspace::workspace_rename,
+            workspace::workspace_trash,
+            workspace::workspace_reveal,
+            workspace::workspace_search,
+            workspace::workspace_check_links,
         ])
         .build(context)
         .expect("failed to build the ExtenDown host")

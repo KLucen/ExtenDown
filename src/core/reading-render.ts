@@ -10,7 +10,13 @@ import type { MarkdownSnapshot } from './markdown-snapshot.ts';
 // then enforce the element and attribute policies. Never split the source.
 const processor = unified()
   .use(remarkReadingDangerousHtmlPolicy)
-  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(remarkRehype, {
+    allowDangerousHtml: true,
+    clobberPrefix: 'extendown:note-',
+    footnoteLabel: '脚注',
+    footnoteLabelProperties: { className: [] },
+    footnoteBackLabel: (reference, occurrence) => '返回脚注 ' + (reference + 1) + ' 的引用 ' + occurrence,
+  })
   .use(rehypeRaw)
   .use(rehypeReadingHtmlPolicy)
   .use(rehypeSanitize, readingSanitizeSchema);

@@ -12,7 +12,7 @@ import {
 } from './contracts.ts';
 
 const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
-const SAFE_ATTRIBUTE_NAMES = new Set(['alt', 'checked', 'class', 'colspan', 'disabled', 'headers', 'href', 'id', 'lang', 'open', 'role', 'rowspan', 'scope', 'start', 'src', 'title', 'type']);
+const SAFE_ATTRIBUTE_NAMES = new Set(['alt', 'aria-label', 'checked', 'class', 'colspan', 'disabled', 'headers', 'href', 'id', 'lang', 'open', 'role', 'rowspan', 'scope', 'start', 'src', 'title', 'type']);
 const MATH_ATTRIBUTE_NAMES = new Set([
   'display', 'encoding', 'xmlns', 'accent', 'accentunder', 'columnalign', 'columnlines', 'columnspacing',
   'displaystyle', 'fence', 'height', 'depth', 'linethickness', 'lspace', 'mathcolor', 'mathsize', 'mathvariant',
@@ -34,6 +34,7 @@ function escapeAttribute(value: string): string {
 
 function attributeName(name: string): string {
   if (name === 'className') return 'class';
+  if (name === 'ariaLabel') return 'aria-label';
   if (name === 'colSpan') return 'colspan';
   if (name === 'rowSpan') return 'rowspan';
   return name;
@@ -77,8 +78,14 @@ function serializeNode(
   if (node.tagName === 'a' && typeof properties.href === 'string' && !/^(?:#|https?:\/\/|mailto:)/iu.test(properties.href)) {
     delete properties.href;
   }
+  if (node.tagName === 'a' && typeof properties.href === 'string' && properties.href.startsWith('#extendown:note-')) {
+    properties.href = '#' + encodeURIComponent(properties.href.slice(1));
+  }
   const isMath = insideMath || node.tagName === 'math';
-  const attributes = Object.entries(properties)
+  const align = properties.align;
+  const tableAlignment = ['td', 'th'].includes(node.tagName) && (align === 'left' || align === 'center' || align === 'right')
+    ? ` style="text-align:${align}"` : '';
+  const attributes = tableAlignment + Object.entries(properties)
     .map(([name, value]) => {
       const normalized = attributeName(name);
       if (!(isMath ? MATH_ATTRIBUTE_NAMES : SAFE_ATTRIBUTE_NAMES).has(normalized)) return '';

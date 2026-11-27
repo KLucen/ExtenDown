@@ -95,7 +95,7 @@ export function downloadMarkdown(view: DocumentView, current: string): void {
 }
 
 export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, previewInputActive?: () => boolean,
-  onConfirmClose?: (confirmClose: () => void) => void) {
+  onConfirmClose?: () => void) {
   const desktop = isTauri();
   const [view, setView] = useState(() => localDocument(desktop ? '未命名.md' : '示例.md', desktop ? '' : EXAMPLE, 0));
   const [source, setSource] = useState(view.initialSource);
@@ -181,16 +181,19 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
           setNotice('请先完成当前操作或输入法候选。');
           return;
         }
-        const closeWindow = async () => {
-          try {
-            await closeDraft.current();
-            await nativeWindow.destroy();
-          } catch (reason) {
-            setError(errorMessage(reason, '无法关闭窗口。'));
-          }
-        };
-        if (protection.current.dirty) onConfirmClose?.(() => void closeWindow());
-        else await closeWindow();
+        if (protection.current.dirty) {
+          onConfirmClose?.();
+          return;
+        }
+        if (operation.current) return;
+        operation.current = true;
+        try {
+          await closeDraft.current();
+          await nativeWindow.destroy();
+        } catch (reason) {
+          operation.current = false;
+          setError(errorMessage(reason, '无法关闭窗口。'));
+        }
       }),
       listen<string>('extendown://document-open-error', event => {
         if (active) setError(errorMessage(event.payload, '无法打开拖入的文件。'));
@@ -269,6 +272,22 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   }
   const closeDraft = useRef(keepDraft);
   closeDraft.current = keepDraft;
+
+  async function closeKeepingDraft() {
+    if (operation.current || protection.current.saving) return false;
+    operation.current = true;
+    setPending(true);
+    try {
+      await closeDraft.current();
+      await getCurrentWindow().destroy();
+      return true;
+    } catch (reason) {
+      operation.current = false;
+      setPending(false);
+      setError(errorMessage(reason, '无法关闭窗口。'));
+      return false;
+    }
+  }
 
   async function replace(action: () => Promise<NativeDocument | null>) {
     await perform(async () => {
@@ -376,7 +395,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
 
   return {
     desktop, view, source, selection, setSelection, dirty, pending, notice, setNotice, error, setError, conflict, recent, drafts,
-    canLeaveInput, edit, openBrowserFile, normalizeLineEndings, save, perform,
+    canLeaveInput, closeKeepingDraft, edit, openBrowserFile, normalizeLineEndings, save, perform,
     openWorkspaceFile, renameWorkspaceEntry, workspaceLocation, noteWorkspaceDiskStatus,
     open: () => replace(() => invoke('open_markdown')),
     newDocument: () => replace(() => desktop ? invoke('new_markdown') : Promise.resolve({

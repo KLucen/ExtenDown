@@ -55,8 +55,9 @@ function App() {
   const menu = useRef<HTMLDetailsElement>(null);
   const previewActivity = useRef(new Set<string>());
   const previewInputActive = () => previewActivity.current.size > 0;
-  const [confirmClose, setConfirmClose] = useState<(() => void) | null>(null);
-  const session = useDocument(surface, previewInputActive, setConfirmClose);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [closeBusy, setCloseBusy] = useState(false);
+  const session = useDocument(surface, previewInputActive, () => setConfirmClose(true));
   const { view, source, selection, desktop, dirty, pending } = session;
   const plugins = useExtensions();
   const scriptPlugins = useScriptPlugins();
@@ -438,10 +439,12 @@ function App() {
             });
           });
         }} />}
-      {confirmClose && <CloseDraftDialog onClose={() => setConfirmClose(null)} onConfirm={() => {
-        const confirm = confirmClose;
-        setConfirmClose(null);
-        confirm();
+      {confirmClose && <CloseDraftDialog busy={closeBusy} onClose={() => setConfirmClose(false)} onConfirm={() => {
+        setCloseBusy(true);
+        void session.closeKeepingDraft().then(closed => {
+          setCloseBusy(false);
+          if (closed) setConfirmClose(false);
+        });
       }} />}
     </div>
   );

@@ -18,6 +18,7 @@ import { SourceSurface } from '../renderer/source-surface';
 import type { SourceSurfaceHandle } from '../renderer/source-surface';
 import { useDocument } from './document-session';
 import { LineEndingDialog } from './line-ending-dialog';
+import { CloseDraftDialog } from './close-draft-dialog';
 import { ScriptCommands, useScriptPlugins, type ScriptRunEntry } from './script-commands';
 import { Settings, useExtensions } from './settings';
 import { CommandPalette, EditorSearch, useCommandShortcuts, useShortcuts } from './commands';
@@ -54,7 +55,8 @@ function App() {
   const menu = useRef<HTMLDetailsElement>(null);
   const previewActivity = useRef(new Set<string>());
   const previewInputActive = () => previewActivity.current.size > 0;
-  const session = useDocument(surface, previewInputActive);
+  const [confirmClose, setConfirmClose] = useState<(() => void) | null>(null);
+  const session = useDocument(surface, previewInputActive, setConfirmClose);
   const { view, source, selection, desktop, dirty, pending } = session;
   const plugins = useExtensions();
   const scriptPlugins = useScriptPlugins();
@@ -137,7 +139,7 @@ function App() {
     function keyboard(event: KeyboardEvent) {
       if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && !previewInputActive()) {
         menu.current?.removeAttribute('open');
-        if (!exportSnapshot && !settings && !paletteOpen && scriptCommand === null && !convertLineEndings) {
+        if (!exportSnapshot && !settings && !paletteOpen && scriptCommand === null && !convertLineEndings && !confirmClose) {
           setPresentation(false);
           setSearchMode(null);
         }
@@ -240,7 +242,7 @@ function App() {
   }
   const shortcut = (id: EditorCommandId) => shortcutLabel(EDITOR_COMMANDS[id], shortcuts.overrides, shortcuts.mac);
   useCommandShortcuts({
-    commands, shortcuts, blocked: Boolean(settings || exportSnapshot || paletteOpen || scriptCommand !== null || convertLineEndings),
+    commands, shortcuts, blocked: Boolean(settings || exportSnapshot || paletteOpen || scriptCommand !== null || convertLineEndings || confirmClose),
     canRun: (event, command) => {
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest('[data-reader-editable="true"]') &&
@@ -436,6 +438,11 @@ function App() {
             });
           });
         }} />}
+      {confirmClose && <CloseDraftDialog onClose={() => setConfirmClose(null)} onConfirm={() => {
+        const confirm = confirmClose;
+        setConfirmClose(null);
+        confirm();
+      }} />}
     </div>
   );
 }

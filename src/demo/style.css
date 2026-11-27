@@ -124,6 +124,11 @@ dialog::backdrop { background: #14221c55; }
 .setting-field select { padding: 4px 8px; }
 .setting-action { justify-self: start; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); color: var(--accent); }
 .setting-action:hover { border-color: var(--accent); }
+.close-draft-dialog { width: min(calc(100% - 32px), 430px); }
+.close-draft-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.close-draft-actions > button { min-height: 34px; padding: 5px 11px; border-radius: 5px; }
+.close-draft-confirm { background: var(--accent); color: var(--surface); }
+.close-draft-confirm:hover { background: color-mix(in srgb, var(--accent) 90%, var(--text)); }
 .line-ending-options { display: grid; gap: 6px; padding: 0; margin: 4px 0 0; border: 0; }
 .line-ending-options legend { margin-bottom: 6px; font-weight: 600; }
 .line-ending-options label { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }

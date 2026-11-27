@@ -94,7 +94,8 @@ export function downloadMarkdown(view: DocumentView, current: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, previewInputActive?: () => boolean) {
+export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, previewInputActive?: () => boolean,
+  onConfirmClose?: (confirmClose: () => void) => void) {
   const desktop = isTauri();
   const [view, setView] = useState(() => localDocument(desktop ? '未命名.md' : '示例.md', desktop ? '' : EXAMPLE, 0));
   const [source, setSource] = useState(view.initialSource);
@@ -180,13 +181,16 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
           setNotice('请先完成当前操作或输入法候选。');
           return;
         }
-        if (protection.current.dirty && !window.confirm('关闭窗口并保留恢复草稿？')) return;
-        try {
-          await closeDraft.current();
-          await nativeWindow.destroy();
-        } catch (reason) {
-          setError(errorMessage(reason, '无法关闭窗口。'));
-        }
+        const closeWindow = async () => {
+          try {
+            await closeDraft.current();
+            await nativeWindow.destroy();
+          } catch (reason) {
+            setError(errorMessage(reason, '无法关闭窗口。'));
+          }
+        };
+        if (protection.current.dirty) onConfirmClose?.(() => void closeWindow());
+        else await closeWindow();
       }),
       listen<string>('extendown://document-open-error', event => {
         if (active) setError(errorMessage(event.payload, '无法打开拖入的文件。'));
@@ -210,7 +214,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
       active = false;
       for (const subscription of subscriptions) void subscription.then(unlisten => unlisten()).catch(() => undefined);
     };
-  }, [desktop, surface]);
+  }, [desktop, onConfirmClose, surface]);
 
   useEffect(() => {
     if (!desktop || !view.documentId) return;

@@ -298,6 +298,7 @@ export function applyReaderMappedTextEdit(
   content: string,
   bomByteLength: number,
   edit: ReaderPlainTextEdit,
+  { allowEncoded = false, encode = (text: string) => text } = {},
 ): ReaderPlainTextEditResult {
   if (typeof content !== 'string' || (bomByteLength !== 0 && bomByteLength !== 3)) {
     return { ok: false, reason: '阅读编辑的源文档或 BOM 信息无效。' };
@@ -321,7 +322,9 @@ export function applyReaderMappedTextEdit(
   })();
   if (!map) return { ok: false, reason: '无法建立当前正文的安全映射。' };
   const block = map.blocks.find((candidate) => candidate.blockStart === edit.blockStart);
-  if (!block || !isReaderMappedTextBlock(map, block)) {
+  if (!block || !(allowEncoded
+    ? block.supported && !/[\r\n]/u.test(map.source.slice(block.blockStart, block.blockEnd))
+    : isReaderMappedTextBlock(map, block))) {
     return { ok: false, reason: block?.reason ?? '当前正文包含无法安全保留的 Markdown 语法。' };
   }
   if (block.visibleText !== edit.sourceText) {
@@ -368,7 +371,7 @@ export function applyReaderMappedTextEdit(
   }
   const sourceStart = insertion && visibleStart === block.visibleText.length ? boundary.sourceEnd : boundary.sourceStart;
   const sourceEnd = insertion ? sourceStart : boundary.sourceEnd;
-  const nextSource = map.source.slice(0, sourceStart) + edit.replacement.slice(visibleStart, replacementEnd) + map.source.slice(sourceEnd);
+  const nextSource = map.source.slice(0, sourceStart) + encode(edit.replacement.slice(visibleStart, replacementEnd)) + map.source.slice(sourceEnd);
   // File decoding stores BOM separately; preserve the caller's text representation.
   const nextContent = content.startsWith('\uFEFF') ? `\uFEFF${nextSource}` : nextSource;
   return {

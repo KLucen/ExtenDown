@@ -1,6 +1,7 @@
-import type { Nodes, Table } from 'mdast';
+import type { Heading, Nodes, Paragraph, PhrasingContent, Table } from 'mdast';
 import { parseMarkdownSnapshot, type MarkdownSnapshot } from './markdown-snapshot.ts';
-import { applyReaderMappedTextEdit, applyReaderPlainTextEdit, escapeReaderPlainText, isReaderPlainTextBlock } from './reader-edit.ts';
+import { matchesPreviewInline, patchPreviewInline, type PreviewInlineText } from './preview-inline-text.ts';
+import { applyReaderMappedTextEdit, applyReaderPlainTextEdit, escapeReaderPlainText } from './reader-edit.ts';
 import { selectionMapFromSnapshot } from './selection-map.ts';
 import { buildSourceCommandPatch, type EditorSelection } from './editor-commands.ts';
 
@@ -45,6 +46,37 @@ function spanFromNode(snapshot: MarkdownSnapshot, node: Nodes): PreviewSourceSpa
   return { from: start + snapshot.bomOffset, to: end + snapshot.bomOffset, expected: snapshot.body.slice(start, end) };
 }
 
+function editableInline(nodes: readonly PhrasingContent[]): boolean {
+  return nodes.every(node => node.type === 'text' ||
+    (node.type === 'emphasis' || node.type === 'strong' || node.type === 'delete') && editableInline(node.children));
+}
+
+function editableTextNode(node: Nodes, blockStart: number): Heading | Paragraph | undefined {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (start === undefined || end === undefined || start > blockStart || end <= blockStart) return;
+  if (start === blockStart && (node.type === 'heading' || node.type === 'paragraph')) {
+    if (editableInline(node.children)) return node;
+    return;
+  }
+  if ('children' in node) {
+    for (const child of node.children) {
+      const block = editableTextNode(child, blockStart);
+      if (block) return block;
+    }
+  }
+}
+
+function visibleInlineText(nodes: readonly PhrasingContent[]): string {
+  return nodes.map(node => node.type === 'text' ? node.value :
+    node.type === 'emphasis' || node.type === 'strong' || node.type === 'delete' ? visibleInlineText(node.children) : '').join('');
+}
+
+function escapePreviewText(text: string, math: boolean): string {
+  const escaped = escapeReaderPlainText(text);
+  return math ? escaped.replace(/\$/gu, '\\$') : escaped;
+}
+
 function tableDraft(snapshot: MarkdownSnapshot, table: Table): PreviewTableDraft | undefined {
   const alignments = table.align;
   if (!alignments?.length || alignments.length > MAX_TABLE_EDITOR_COLUMNS || table.children.length > MAX_TABLE_EDITOR_ROWS) return undefined;
@@ -68,8 +100,11 @@ function tableDraft(snapshot: MarkdownSnapshot, table: Table): PreviewTableDraft
 export function collectPreviewEdits(source: string | MarkdownSnapshot, math = false) {
   const snapshot = typeof source === 'string' ? parseMarkdownSnapshot(source, { math }) : source;
   const map = selectionMapFromSnapshot(snapshot, snapshot.bomOffset ? 3 : 0);
-  const text = new Map(map.blocks.filter(block => isReaderPlainTextBlock(map, block))
-    .map(block => [block.blockStart, block.visibleText]));
+  const mappedBlocks = new Map(map.blocks.filter(block => block.supported && !/[\r\n]/u.test(
+    map.source.slice(block.blockStart, block.blockEnd),
+  )).map(block => [block.blockStart, block]));
+  const text = new Map<number, string>();
+  const paragraphs = new Set<number>();
   const tasks = new Map<number, PreviewSourcePatch>();
   const tables = new Map<number, { span: PreviewSourceSpan; editable?: EditablePreviewTable }>();
   const code = new Map<number, { span: PreviewSourceSpan; label: string }>();
@@ -79,6 +114,13 @@ export function collectPreviewEdits(source: string | MarkdownSnapshot, math = fa
     const span = spanFromNode(snapshot, node);
     if (span) {
       const start = span.from - snapshot.bomOffset;
+      if ((node.type === 'paragraph' || node.type === 'heading') && editableInline(node.children)) {
+        const block = mappedBlocks.get(start);
+        if (block) {
+          text.set(start, block.visibleText);
+          if (topLevel && node.type === 'paragraph') paragraphs.add(start);
+        }
+      }
       if (node.type === 'listItem' && typeof node.checked === 'boolean') {
         const marker = /^(?:[-+*]|\d{1,9}[.)])[ \t]+\[([ xX])\](?=[ \t\r\n]|$)/u.exec(span.expected);
         if (marker && (marker[1] !== ' ') === node.checked) {
@@ -103,34 +145,113 @@ export function collectPreviewEdits(source: string | MarkdownSnapshot, math = fa
     if ('children' in node) node.children.forEach(child => visit(child, false));
   };
   snapshot.root.children.forEach(node => visit(node, true));
-  return { text, tasks, tables, code, equations };
+  return { text, paragraphs, tasks, tables, code, equations };
 }
 
-export function buildPreviewTextPatch(source: string, blockStart: number, previous: string, next: string, math: boolean): PreviewSourcePatch | null {
-  const bomOffset = source.startsWith('\uFEFF') ? 1 : 0;
+export function buildPreviewTextPatch(source: string, blockStart: number, previous: string, next: string, math: boolean,
+  emptyParagraph = false, inline?: PreviewInlineText): PreviewSourcePatch | null {
+  const snapshot = parseMarkdownSnapshot(source, { math });
+  const { bomOffset } = snapshot;
   const bomBytes = bomOffset ? 3 : 0;
+  const original = editableTextNode(snapshot.root, blockStart);
   const matchesVisibleText = (content: string) => {
-    if (next === '') return true;
-    const snapshot = parseMarkdownSnapshot(content, { math });
-    const block = selectionMapFromSnapshot(snapshot, bomBytes).blocks.find(candidate => candidate.blockStart === blockStart);
-    return block?.supported && block.visibleText === next;
+    const block = editableTextNode(parseMarkdownSnapshot(content, { math }).root, blockStart);
+    return block?.type === (original?.type ?? 'paragraph') && visibleInlineText(block.children) === next &&
+      (!inline || matchesPreviewInline(block.children, inline));
   };
-  const escaped = () => math ? escapeReaderPlainText(next).replace(/\$/gu, '\\$') : escapeReaderPlainText(next);
-  if (blockStart === 0 && previous === '' && source.length === bomOffset) {
-    if (/[\r\n\uD800-\uDFFF]/u.test(next)) return null;
-    const insert = escaped();
-    return matchesVisibleText(source + insert) ? { from: bomOffset, to: bomOffset, expected: '', insert } : null;
+  if (previous === '' && (emptyParagraph || blockStart === 0 && source.length === bomOffset)) {
+    if (/[\r\n\u0000\uD800-\uDFFF]/u.test(next)) return null;
+    const from = blockStart + bomOffset;
+    if (from < bomOffset || from > source.length) return null;
+    const insert = escapePreviewText(next, math);
+    const content = source.slice(0, from) + insert + source.slice(from);
+    return !next || matchesVisibleText(content) ? { from, to: from, expected: '', insert } : null;
   }
+  const span = original && spanFromNode(snapshot, original);
+  if (!original || !span || visibleInlineText(original.children) !== previous || /[\r\n]/u.test(span.expected)) return null;
+  if (!next) return { ...span, insert: original.type === 'heading' ? '#'.repeat(original.depth) : '' };
   const range = { blockStart, sourceText: previous, replacement: next };
-  const direct = applyReaderMappedTextEdit(source, bomBytes, range);
-  if (!direct.ok) return null;
-  const edit = matchesVisibleText(direct.content) ? direct : applyReaderPlainTextEdit(source, bomBytes, {
-    ...range, replacement: escaped(),
-  });
-  if (!edit.ok || !matchesVisibleText(edit.content)) return null;
+  let edit = applyReaderMappedTextEdit(source, bomBytes, range, { allowEncoded: true });
+  if (edit.ok && !matchesVisibleText(edit.content)) {
+    edit = applyReaderMappedTextEdit(source, bomBytes, range, { allowEncoded: true, encode: value => escapePreviewText(value, math) });
+  }
+  if (!edit.ok || !matchesVisibleText(edit.content)) {
+    const patch = inline && patchPreviewInline(snapshot, original.children, inline, math);
+    return patch && matchesVisibleText(source.slice(0, patch.from) + patch.insert + source.slice(patch.to)) ? patch : null;
+  }
   const from = edit.sourceStart + bomOffset;
   const to = edit.sourceEnd + bomOffset;
   return { from, to, expected: edit.sourceExact, insert: edit.content.slice(from, edit.content.length - source.length + to) };
+}
+
+interface PreviewParagraphSplit extends PreviewSourcePatch {
+  readonly nextBlock: number;
+  readonly empty: boolean;
+}
+
+/** Copy complete inline nodes and close/reopen emphasis at partial ranges. */
+function paragraphSlice(children: readonly PhrasingContent[], source: string, from: number, to: number, math: boolean): string {
+  let cursor = 0;
+  function slice(node: PhrasingContent): string {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return '';
+    const first = cursor;
+    const raw = source.slice(start, end);
+    if (node.type === 'text') {
+      cursor += node.value.length;
+      if (from <= first && cursor <= to) return raw;
+      return escapePreviewText(node.value.slice(Math.max(from - first, 0), Math.max(to - first, 0)), math);
+    }
+    if (node.type !== 'emphasis' && node.type !== 'strong' && node.type !== 'delete') return '';
+    const text = node.children.map(slice).join('');
+    if (!text) return '';
+    if (from <= first && cursor <= to) return raw;
+    const childStart = node.children[0]?.position?.start.offset;
+    const childEnd = node.children.at(-1)?.position?.end.offset;
+    if (childStart === undefined || childEnd === undefined) return '';
+    return source.slice(start, childStart) + text + source.slice(childEnd, end);
+  }
+  return children.map(slice).join('');
+}
+
+export function buildPreviewParagraphSplitPatch(source: string, blockStart: number, previous: string, text: string,
+  selection: EditorSelection, math: boolean, emptyParagraph = false, inline?: PreviewInlineText): PreviewParagraphSplit | null {
+  const { start, end } = selection;
+  const boundary = (offset: number) => offset >= 0 && offset <= text.length &&
+    (offset === text.length || graphemes.segment(text).containing(offset)?.index === offset);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start > end || !boundary(start) || !boundary(end)) return null;
+  const snapshot = parseMarkdownSnapshot(source, { math });
+  const lineEnding = /\r\n|\n|\r/u.exec(snapshot.body)?.[0] ?? '\n';
+  const gap = lineEnding.repeat(2);
+  const node = snapshot.root.children.find(child => child.type === 'paragraph' && child.position?.start.offset === blockStart);
+  const span = node && spanFromNode(snapshot, node);
+  if ((!node || node.type !== 'paragraph' || !span) && !emptyParagraph) return null;
+  const from = span?.from ?? blockStart + snapshot.bomOffset;
+  const to = span?.to ?? from;
+  if (from < snapshot.bomOffset || to > source.length) return null;
+  const originalText = collectPreviewEdits(snapshot).text.get(blockStart);
+  if ((emptyParagraph ? '' : originalText) !== previous) return null;
+
+  const textPatch = previous !== text ? buildPreviewTextPatch(source, blockStart, previous, text, math, emptyParagraph, inline) : null;
+  if (previous !== text && !textPatch) return null;
+  const edited = textPatch
+    ? parseMarkdownSnapshot(source.slice(0, textPatch.from) + textPatch.insert + source.slice(textPatch.to), { math })
+    : snapshot;
+  const paragraph = edited.root.children.find(child => child.type === 'paragraph' && child.position?.start.offset === blockStart);
+  if (text && (!paragraph || paragraph.type !== 'paragraph' || !editableInline(paragraph.children))) return null;
+
+  const left = text.slice(0, start).trimEnd();
+  const right = text.slice(end).trimStart();
+  const children = paragraph?.type === 'paragraph' ? paragraph.children : [];
+  const leftSource = left ? paragraphSlice(children, edited.body, 0, left.length, math) : '';
+  const rightSource = right ? paragraphSlice(children, edited.body, text.length - right.length, text.length, math) : '';
+  const insert = leftSource + gap + rightSource;
+  const nextBlock = blockStart + leftSource.length + gap.length;
+  const next = collectPreviewEdits(source.slice(0, from) + insert + source.slice(to), math);
+  if (left && (!next.paragraphs.has(blockStart) || next.text.get(blockStart) !== left)) return null;
+  if (right && (!next.paragraphs.has(nextBlock) || next.text.get(nextBlock) !== right)) return null;
+  return { from, to, expected: source.slice(from, to), insert, nextBlock, empty: !right };
 }
 
 export function buildPreviewFormatPatch(

@@ -17,6 +17,13 @@ pub struct RecentDocument {
     pub path: PathBuf,
 }
 
+#[derive(Serialize)]
+pub struct DraftSummary {
+    pub id: String,
+    pub name: String,
+    pub path: Option<PathBuf>,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct RecoveryDraft {
     pub id: String,
@@ -57,7 +64,7 @@ impl RecoveryDraft {
         Ok(draft)
     }
 
-    pub fn list(directory: &Path) -> Vec<Self> {
+    pub fn list(directory: &Path) -> Vec<DraftSummary> {
         let Ok(entries) = fs::read_dir(directory) else {
             return Vec::new();
         };
@@ -73,8 +80,12 @@ impl RecoveryDraft {
         paths.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         paths
             .into_iter()
-            .take(20)
             .filter_map(|(_, id)| Self::read(directory, &id).ok())
+            .map(|draft| DraftSummary {
+                id: draft.id,
+                name: draft.name,
+                path: draft.path,
+            })
             .collect()
     }
 
@@ -174,6 +185,29 @@ pub fn retarget_recent(directory: &Path, original: &Path, target: &Path) -> Comm
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_older_drafts_and_discards_only_the_requested_draft() {
+        let directory = tempfile::tempdir().unwrap();
+        let ids = (0..22)
+            .map(|index| {
+                let session = DocumentSession::blank();
+                RecoveryDraft::write(directory.path(), &session, format!("Draft {index}")).unwrap();
+                session.document.document_id
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(RecoveryDraft::list(directory.path()).len(), ids.len());
+        RecoveryDraft::discard(directory.path(), &ids[0]).unwrap();
+        assert!(RecoveryDraft::read(directory.path(), &ids[0]).is_err());
+        assert_eq!(RecoveryDraft::list(directory.path()).len(), ids.len() - 1);
+        assert_eq!(
+            RecoveryDraft::read(directory.path(), &ids[1])
+                .unwrap()
+                .source,
+            "Draft 1"
+        );
+    }
 
     #[test]
     fn restores_a_draft_against_its_baseline_and_detaches_after_external_changes() {

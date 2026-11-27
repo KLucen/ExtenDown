@@ -1,0 +1,41 @@
+.settings-modal.confirmation-dialog {
+  width: min(calc(100% - 32px), 460px);
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  box-shadow: 0 14px 36px #14221c2e;
+}
+.confirmation-header { align-items: flex-start; }
+.confirmation-header h2 { min-width: 0; overflow-wrap: anywhere; }
+.confirmation-header button { flex: none; min-width: 28px; }
+.confirmation-content { padding: 15px 20px 4px; color: var(--text-muted); overflow-wrap: anywhere; }
+.confirmation-content p, .confirmation-content ul { margin: 0; }
+.confirmation-content ul { padding-inline-start: 20px; }
+.confirmation-content p + ul, .confirmation-content p + p { margin-block-start: 8px; }
+.confirmation-error { margin: 6px 20px 0; color: var(--warning); overflow-wrap: anywhere; }
+.confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+}
+.confirmation-actions button {
+  min-height: 34px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface-soft);
+}
+.confirmation-actions button:hover:not(:disabled) { border-color: currentColor; }
+.confirmation-actions button[data-variant="primary"] {
+  border-color: var(--accent);
+  color: var(--surface);
+  background: var(--accent);
+}
+.confirmation-actions button[data-variant="danger"] {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--line));
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface));
+}
+.confirmation-actions button[data-variant="danger"]:hover:not(:disabled) { border-color: var(--warning); }

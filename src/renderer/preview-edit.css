@@ -16,6 +16,7 @@
 .reader-editable-block[data-reader-editable]:focus { outline: 1px solid var(--accent); outline-offset: 4px; }
 .reader-empty-block { min-height: 1.5em; }
 .reader-empty-block:empty:not(:focus)::before { content: "点击开始写作"; color: var(--text-muted); }
+.preview-cell-editor { display: block; min-height: 1.8em; }
 .preview-block-actions { display: flex; flex-wrap: wrap; gap: 5px; margin: -4px 0 12px; }
 .preview-block-actions[data-inline="true"] { display: inline-flex; margin: 0 .3em; vertical-align: middle; }
 .preview-block-actions button { color: var(--text-muted); }

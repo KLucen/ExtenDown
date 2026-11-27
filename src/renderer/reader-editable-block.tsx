@@ -1,15 +1,17 @@
 import { createElement, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode, ClipboardEvent, FormEvent } from 'react';
+import type { EditorSelection } from '../core/editor-commands';
+import type { PreviewInlineText } from '../core/preview-inline-text';
 import { createReaderEditSession } from './reader-edit-session';
 
 interface ReaderEditableBlockProps {
   readonly documentKey: string;
-  readonly as: 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+  readonly as: 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'span';
   readonly blockStart: number;
   readonly sourceText: string;
   readonly enabled: boolean;
   readonly initialCaret?: number;
-  readonly onCommit: (blockStart: number, sourceText: string, text: string) => Promise<boolean>;
+  readonly onCommit: (blockStart: number, sourceText: string, text: string, inline?: PreviewInlineText) => Promise<boolean>;
   readonly onDraftChange: (dirty: boolean) => void;
   readonly onActivityChange: (kind: 'composing' | 'committing', active: boolean) => void;
   readonly onRestricted: (blockStart: number, reason: string, draftText?: string) => void;
@@ -17,6 +19,7 @@ interface ReaderEditableBlockProps {
   readonly onFinish?: () => void;
   readonly onCancel?: () => void;
   readonly onFormatKey?: (event: KeyboardEvent<HTMLElement>) => boolean;
+  readonly onSplit?: (text: string, selection: EditorSelection, inline?: PreviewInlineText) => boolean;
   readonly children: ReactNode;
   readonly className?: string;
   readonly id?: string;
@@ -35,6 +38,53 @@ function insertPlainText(text: string): boolean {
   selection.removeAllRanges();
   selection.addRange(range);
   return true;
+}
+
+export function readerCaretOffset(element: HTMLElement, node: Node, offset: number): number | undefined {
+  if (!element.contains(node)) return undefined;
+  const prefix = element.ownerDocument.createRange();
+  prefix.selectNodeContents(element);
+  prefix.setEnd(node, offset);
+  return prefix.toString().length;
+}
+
+function caretRange(element: HTMLElement, offset: number): Range | null {
+  const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const range = element.ownerDocument.createRange();
+  let remaining = offset;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node as Text;
+    if (remaining <= text.length) {
+      range.setStart(text, remaining);
+      range.collapse(true);
+      return range;
+    }
+    remaining -= text.length;
+  }
+  if (offset !== 0) return null;
+  range.setStart(element, 0);
+  return range;
+}
+
+function previewInlineText(element: HTMLElement | null): PreviewInlineText | undefined {
+  if (!element) return undefined;
+  const parts: PreviewInlineText[number][] = [];
+  for (const node of element.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const previous = parts.at(-1);
+      const text = node.textContent ?? '';
+      if (typeof previous === 'string') parts[parts.length - 1] = previous + text;
+      else parts.push(text);
+      continue;
+    }
+    if (!(node instanceof HTMLElement)) return undefined;
+    const type = node.tagName === 'STRONG' ? 'strong' : node.tagName === 'EM' ? 'emphasis' :
+      node.tagName === 'DEL' ? 'delete' : undefined;
+    const children = type && previewInlineText(node);
+    if (!type || !children) return undefined;
+    parts.push({ type, children });
+  }
+  return parts;
 }
 
 /**
@@ -57,6 +107,7 @@ export function ReaderEditableBlock({
   onFinish,
   onCancel,
   onFormatKey,
+  onSplit,
   children,
   className,
   id,
@@ -65,7 +116,7 @@ export function ReaderEditableBlock({
   // Chromium does not name editable headings from their contents automatically.
   // Refer to the live DOM text so unsaved input is reflected without a stale label.
   const generatedId = useId();
-  const headingId = as === 'p' ? undefined : (id ?? `reader-heading-${generatedId}`);
+  const headingId = as.startsWith('h') ? id ?? `reader-heading-${generatedId}` : undefined;
   const elementRef = useRef<HTMLElement | null>(null);
   const [restoreVersion, setRestoreVersion] = useState(0);
   const nativeMutationRef = useRef(false);
@@ -109,7 +160,7 @@ export function ReaderEditableBlock({
         nativeMutationRef.current = false;
         setRestoreVersion(version => version + 1);
       },
-      onCommit: text => callbacks.current.onCommit(blockStart, sourceText, text),
+      onCommit: text => callbacks.current.onCommit(blockStart, sourceText, text, previewInlineText(elementRef.current)),
       onDraftChange: dirty => callbacks.current.onDraftChange(dirty),
       onRestricted: (reason, text) => callbacks.current.onRestricted(blockStart, reason, text),
       onFinish: () => callbacks.current.onFinish?.(),
@@ -124,12 +175,7 @@ export function ReaderEditableBlock({
     if (onStart && element) {
       if (document.activeElement !== element) element.focus({ preventScroll: true });
       const selection = window.getSelection();
-      let range = caret.current;
-      if (initialCaret !== undefined && element.firstChild instanceof Text) {
-        range = element.ownerDocument.createRange();
-        range.setStart(element.firstChild, Math.min(initialCaret, element.firstChild.length));
-        range.collapse(true);
-      }
+      const range = initialCaret === undefined ? caret.current : caretRange(element, initialCaret);
       if (range && element.contains(range.startContainer) && element.contains(range.endContainer)) {
         selection?.removeAllRanges();
         selection?.addRange(range);
@@ -162,6 +208,20 @@ export function ReaderEditableBlock({
     }
   };
 
+  const split = () => {
+    const element = elementRef.current;
+    const range = captureSelection();
+    if (!element || !range || !onSplit || !sessionRef.current?.canSplit()) return;
+    const start = readerCaretOffset(element, range.startContainer, range.startOffset);
+    const end = readerCaretOffset(element, range.endContainer, range.endOffset);
+    if (start === undefined || end === undefined) return;
+    if (onSplit(element.textContent ?? '', { start, end, direction: range.collapsed ? 'none' : 'forward' }, previewInlineText(element))) {
+      sessionRef.current?.restore();
+    } else {
+      onRestricted(blockStart, '当前段落无法安全拆分，请在源码中换行。');
+    }
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (sessionRef.current?.composing() || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -171,7 +231,8 @@ export function ReaderEditableBlock({
     }
     if (event.key === 'Enter') {
       event.preventDefault();
-      onRestricted(blockStart, '阅读中暂不拆分段落，请在源码中换行。');
+      if (onSplit) split();
+      else elementRef.current?.blur();
       return;
     }
     if (event.key === 'Escape') {
@@ -199,7 +260,8 @@ export function ReaderEditableBlock({
     suppressContentEditableWarning: true,
     'data-reader-editable': enabled ? 'true' : undefined,
     'data-source-block-start': blockStart,
-    'aria-description': enabled ? '按 Ctrl+Enter 应用修改，按 Escape 取消' : onStart ? '点击文字或按 Enter 开始编辑' : undefined,
+    'aria-description': enabled ? (onSplit ? '按 Enter 拆分段落，按 Ctrl+Enter 应用修改，按 Escape 取消'
+      : '按 Enter 应用修改，按 Escape 取消') : onStart ? '点击文字或按 Enter 开始编辑' : undefined,
     onClick: !enabled && onStart ? (event: React.MouseEvent<HTMLElement>) => {
       // A drag selection remains a normal reading selection. A single click
       // with a collapsed caret enters editing at the point the user clicked.
@@ -230,9 +292,9 @@ export function ReaderEditableBlock({
       const inputType = (event.nativeEvent as InputEvent).inputType ?? '';
       if (!sessionRef.current?.composing() && (inputType === 'insertParagraph' || inputType === 'insertLineBreak' || inputType.startsWith('format'))) {
         event.preventDefault();
-        onRestricted(blockStart, inputType.startsWith('format')
-          ? '这项格式操作请使用选文菜单，或在源码中继续。'
-          : '阅读中暂不拆分段落，请在源码中换行。');
+        if (inputType.startsWith('format')) onRestricted(blockStart, '这项格式操作请使用选文菜单，或在源码中继续。');
+        else if (onSplit) split();
+        else elementRef.current?.blur();
       }
     },
     onInput: enabled ? () => {

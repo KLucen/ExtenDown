@@ -7,6 +7,7 @@ import { editorToMarkdownText, markdownToEditorText } from '../core/editor-text'
 import { decodeMarkdownBytes, encodeMarkdownBytes } from '../core/markdown-source';
 import type { MarkdownSourceFormat } from '../core/markdown-source';
 import type { SourceSelection, SourceSurfaceHandle } from '../renderer/source-surface';
+import { useConfirmation } from './confirmation-dialog';
 
 interface NativeDocument {
   documentId: string;
@@ -31,6 +32,7 @@ export interface RecoveryDraft { id: string; name: string; path: string | null }
 export interface WorkspaceLocation { documentId: string; line: number }
 export type WorkspaceDiskStatus = 'unchanged' | 'changed' | 'missing';
 export type UniformLineEnding = 'lf' | 'crlf';
+type CloseChoice = 'keep' | 'discard';
 
 const EXAMPLE = [
   '# 写下你的想法', '', '在源码区编辑，预览会随草稿更新。', '',
@@ -49,6 +51,10 @@ const ERRORS: Record<string, string> = {
   'invalid-line-ending': '请选择 LF 或 CRLF 换行格式。',
   'line-endings-not-mixed': '当前文档已使用统一的换行格式。',
   'save-failed': '无法写入文件，请检查目标是否可写。',
+  'draft-already-open': '这份草稿已在一个窗口中打开。请先关闭该窗口。',
+  'draft-not-found': '找不到这份恢复草稿。',
+  'draft-write-failed': '无法保存恢复草稿。请检查应用数据目录的写入权限。',
+  'draft-remove-failed': '无法删除恢复草稿。请检查应用数据目录的写入权限。',
   'read-failed': '无法读取文件。',
   'unsupported-file-type': '请选择 .md、.markdown 或 .txt 文档。',
   'workspace-invalid-name': '请输入有效名称。新建文档须以 .md、.markdown 或 .txt 结尾。',
@@ -94,7 +100,8 @@ export function downloadMarkdown(view: DocumentView, current: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, previewInputActive?: () => boolean) {
+export function useDocument(surface: RefObject<SourceSurfaceHandle | null>,
+  previewInputActive?: () => boolean, finishPreviewInput?: () => Promise<boolean>) {
   const desktop = isTauri();
   const [view, setView] = useState(() => localDocument(desktop ? '未命名.md' : '示例.md', desktop ? '' : EXAMPLE, 0));
   const [source, setSource] = useState(view.initialSource);
@@ -109,6 +116,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   const [recent, setRecent] = useState<RecentDocument[]>([]);
   const [drafts, setDrafts] = useState<RecoveryDraft[]>([]);
   const [workspaceLocation, setWorkspaceLocation] = useState<WorkspaceLocation | null>(null);
+  const { confirm, dialog: documentConfirmation } = useConfirmation();
   const operation = useRef(false);
   const editVersion = useRef(0);
   const keyCounter = useRef(0);
@@ -119,14 +127,16 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   const protection = useRef({ dirty: false, saving: false });
   const previewInput = useRef(previewInputActive);
   previewInput.current = previewInputActive;
+  const finishPreview = useRef(finishPreviewInput);
+  finishPreview.current = finishPreviewInput;
   const dirty = draftDirty || source !== view.initialSource;
   protection.current = { dirty, saving: pending };
 
-  async function keepDraft() {
+  async function keepDraft(requireCurrent = false) {
     await draftWork.current;
     if (desktop && dirty && view.documentId) {
       await invoke('write_markdown_draft', {
-        documentId: view.documentId, source: surface.current?.text() ?? source, revision: view.revision,
+        documentId: view.documentId, source: surface.current?.text() ?? source, revision: view.revision, requireCurrent,
       });
     } else if (desktop && view.documentId) {
       await invoke('clear_markdown_draft', { documentId: view.documentId });
@@ -134,23 +144,31 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   }
   const closeDraft = useRef(keepDraft);
   closeDraft.current = keepDraft;
+  const closingDocumentId = useRef(view.documentId);
+  closingDocumentId.current = view.documentId;
 
-  const closeKeepingDraft = useCallback(async (confirmed: boolean) => {
+  const closeWindow = useCallback(async (choice?: CloseChoice) => {
     if (operation.current || protection.current.saving || surface.current?.composing() || previewInput.current?.()) {
-      if (confirmed) setCloseError('请先完成当前操作或输入法候选。');
+      if (choice) setCloseError('请先完成当前操作或输入法候选。');
       return;
     }
     operation.current = true;
     setPending(true);
     setCloseError('');
     try {
-      await closeDraft.current();
+      if (choice === 'discard') {
+        const documentId = closingDocumentId.current;
+        await draftWork.current;
+        if (documentId) await invoke('clear_markdown_draft', { documentId });
+      } else {
+        await closeDraft.current(true);
+      }
       await getCurrentWindow().destroy();
     } catch (reason) {
       operation.current = false;
       setPending(false);
       const message = errorMessage(reason, '无法关闭窗口。');
-      if (confirmed) setCloseError(message);
+      if (choice) setCloseError(message);
       else setError(message);
     }
   }, [surface]);
@@ -211,7 +229,8 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
     const subscriptions = [
       nativeWindow.onCloseRequested(async event => {
         event.preventDefault();
-        if (protection.current.saving || operation.current || surface.current?.composing() || previewInput.current?.()) {
+        const canClose = () => !protection.current.saving && !operation.current && !surface.current?.composing();
+        if (!canClose() || (previewInput.current?.() && !await finishPreview.current?.()) || !canClose()) {
           setNotice('请先完成当前操作或输入法候选。');
           return;
         }
@@ -219,7 +238,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
           setConfirmClose(true);
           return;
         }
-        await closeKeepingDraft(false);
+        await closeWindow();
       }),
       listen<string>('extendown://document-open-error', event => {
         if (active) setError(errorMessage(event.payload, '无法打开拖入的文件。'));
@@ -243,7 +262,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
       active = false;
       for (const subscription of subscriptions) void subscription.then(unlisten => unlisten()).catch(() => undefined);
     };
-  }, [closeKeepingDraft, desktop, surface]);
+  }, [closeWindow, desktop, surface]);
 
   useEffect(() => {
     if (!desktop || !view.documentId) return;
@@ -287,8 +306,13 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   }
 
   async function replace(action: () => Promise<NativeDocument | null>) {
-    await perform(async () => {
-      if (dirty && !window.confirm(desktop ? '切换文档并保留当前恢复草稿？' : '放弃当前未保存的修改？')) return;
+    return perform(async () => {
+      if (dirty && !await confirm({
+        title: '切换文档',
+        description: desktop ? '当前修改将保留为恢复草稿。' : '切换文档将丢弃当前未保存的修改。',
+        confirmLabel: desktop ? '切换并保留草稿' : '丢弃并切换',
+        variant: desktop ? 'primary' : 'danger',
+      })) return;
       await keepDraft();
       const opened = await action();
       if (opened) applyOpened(opened);
@@ -393,8 +417,8 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   return {
     desktop, view, source, selection, setSelection, dirty, pending, notice, setNotice, error, setError, conflict, recent, drafts,
     canLeaveInput, edit, openBrowserFile, normalizeLineEndings, save, perform,
-    confirmClose, closeError,
-    closeKeepingDraft: () => closeKeepingDraft(true),
+    confirmClose, closeError, documentConfirmation,
+    closeWindow,
     cancelClose: () => {
       if (operation.current) return;
       setConfirmClose(false);
@@ -407,7 +431,11 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
     })),
     newWindow: () => perform(() => invoke('new_document_window'), '无法新建窗口。'),
     reload: () => perform(async () => {
-      if (dirty && !window.confirm('重新载入磁盘内容并保留当前恢复草稿？')) return;
+      if (dirty && !await confirm({
+        title: '从磁盘重新载入',
+        description: '编辑器将打开磁盘上的版本。当前修改将保留为恢复草稿。',
+        confirmLabel: '重新载入并保留草稿',
+      })) return;
       await keepDraft();
       applyOpened(await invoke<NativeDocument>('reload_markdown', { documentId: view.documentId }));
       await refreshLists();

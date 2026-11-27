@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, MouseEvent } from 'react';
+import { useConfirmation } from './confirmation-dialog';
 import { errorMessage, useDocument, type WorkspaceDiskStatus } from './document-session';
 import { hasAnchor, markdownAnchors, offsetAtLine, readLocalLinks } from './workspace-links';
 import './workspace-panel.css';
@@ -47,6 +48,7 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
   const [message, setMessage] = useState('');
   const [menu, setMenu] = useState<Menu | null>(null);
   const [nameEdit, setNameEdit] = useState<NameEdit | null>(null);
+  const confirmation = useConfirmation();
   const list = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const nameDialog = useRef<HTMLDialogElement>(null);
@@ -270,6 +272,26 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
     setMenu(null);
   }
 
+  async function trashEntry(selected: Root, entry: Entry) {
+    closeMenu(true);
+    if (!session.canLeaveInput() || !await confirmation.confirm({
+      title: '移到回收站',
+      description: '将「' + entry.name + '」移到回收站。',
+      confirmLabel: '移到回收站',
+      variant: 'danger',
+    })) return;
+    if (rootRef.current?.id !== selected.id || !session.canLeaveInput()) return;
+    await run(async () => {
+      await invoke('workspace_trash', { workspaceId: selected.id, relative: entry.path });
+      if (activeFolder === entry.path || activeFolder.startsWith(entry.path + '/')) {
+        setActiveFolder(parentPath(entry.path));
+      }
+      const remaining = expanded.filter(path => path !== entry.path && !path.startsWith(entry.path + '/'));
+      setExpanded(remaining);
+      await loadDirectories(selected, remaining);
+    }, '无法移到回收站。');
+  }
+
   async function submitName(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!root || !nameEdit || !nameEdit.value) return;
@@ -406,7 +428,7 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
       }}>{segment}</button></span>)}
   </div> : null;
 
-  return <aside id="workspace-panel" className="document-workspace" aria-label="工作区" hidden={!open}>
+  return <><aside id="workspace-panel" className="document-workspace" aria-label="工作区" hidden={!open}>
     <header className="workspace-panel-header"><span>工作区</span>
       <button type="button" aria-label="收起工作区" onClick={() => { setMenu(null); onClose(); }}>×</button>
     </header>
@@ -521,19 +543,8 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
       <button type="button" role="menuitem" disabled={busy || session.pending || menuEntry.linked} onClick={() => {
         closeMenu(true); setError(''); setNameEdit({ kind: 'rename', path: menuEntry.path, value: menuEntry.name });
       }}>重命名</button>
-      <button type="button" role="menuitem" disabled={busy || session.pending || menuEntry.linked} onClick={() => {
-        closeMenu(true);
-        if (!session.canLeaveInput() || !window.confirm('将“' + menuEntry.name + '”移到回收站？')) return;
-        void run(async () => {
-          await invoke('workspace_trash', { workspaceId: root.id, relative: menuEntry.path });
-          if (activeFolder === menuEntry.path || activeFolder.startsWith(menuEntry.path + '/')) {
-            setActiveFolder(parentPath(menuEntry.path));
-          }
-          const remaining = expanded.filter(path => path !== menuEntry.path && !path.startsWith(menuEntry.path + '/'));
-          setExpanded(remaining);
-          await loadDirectories(root, remaining);
-        }, '无法移到回收站。');
-      }}>移到回收站</button>
+      <button type="button" role="menuitem" disabled={busy || session.pending || menuEntry.linked}
+        onClick={() => void trashEntry(root, menuEntry)}>移到回收站</button>
     </div>}
     {nameEdit && <dialog ref={nameDialog} className="workspace-name-dialog" onCancel={() => setNameEdit(null)}>
       <form onSubmit={submitName}>
@@ -546,5 +557,5 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
           <button type="submit" disabled={busy || session.pending || !nameEdit.value}>确认</button></div>
       </form>
     </dialog>}
-  </aside>;
+  </aside>{confirmation.dialog}</>;
 }

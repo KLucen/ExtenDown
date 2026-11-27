@@ -12,7 +12,7 @@ use document::{
     existing_document_path, publish, save_document_path, supported_path,
 };
 use percent_encoding::percent_decode_str;
-use recovery::{RecentDocument, RecoveryDraft};
+use recovery::{DraftSummary, RecentDocument, RecoveryDraft};
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -329,16 +329,19 @@ fn write_markdown_draft(
     document_id: String,
     source: String,
     revision: u64,
+    require_current: Option<bool>,
 ) -> CommandResult<()> {
     let app = window.app_handle();
     let directory = draft_dir(app)?;
     let mut store = lock_store(app)?;
-    if let Ok(session) = store.get_mut(window.label(), &document_id) {
-        if session.document.revision == revision {
-            return RecoveryDraft::write(&directory, session, source);
+    match store.get_mut(window.label(), &document_id) {
+        Ok(session) if session.document.revision == revision => {
+            RecoveryDraft::write(&directory, session, source)
         }
+        Err(error) if require_current.unwrap_or(false) => Err(error),
+        Ok(_) if require_current.unwrap_or(false) => Err("revision-conflict"),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -350,7 +353,7 @@ fn clear_markdown_draft(window: WebviewWindow, document_id: String) -> CommandRe
 }
 
 #[tauri::command]
-fn recover_markdown_drafts(app: AppHandle) -> CommandResult<Vec<RecoveryDraft>> {
+fn recover_markdown_drafts(app: AppHandle) -> CommandResult<Vec<DraftSummary>> {
     let store = lock_store(&app)?;
     let drafts = RecoveryDraft::list(&draft_dir(&app)?);
     Ok(drafts

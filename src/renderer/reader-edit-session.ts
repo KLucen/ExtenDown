@@ -145,6 +145,7 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
 
   return {
     composing: () => composing,
+    canSplit: () => alive && editing && !composing && !settling,
     ownsDraft: () => editing,
     focus: () => {
       if (!alive) return;

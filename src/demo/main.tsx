@@ -18,7 +18,7 @@ import { SourceSurface } from '../renderer/source-surface';
 import type { SourceSurfaceHandle } from '../renderer/source-surface';
 import { useDocument } from './document-session';
 import { LineEndingDialog } from './line-ending-dialog';
-import { CloseDraftDialog } from './close-draft-dialog';
+import { ConfirmationDialog } from './confirmation-dialog';
 import { ScriptCommands, useScriptPlugins, type ScriptRunEntry } from './script-commands';
 import { Settings, useExtensions } from './settings';
 import { CommandPalette, EditorSearch, useCommandShortcuts, useShortcuts } from './commands';
@@ -55,7 +55,16 @@ function App() {
   const menu = useRef<HTMLDetailsElement>(null);
   const previewActivity = useRef(new Set<string>());
   const previewInputActive = () => previewActivity.current.size > 0;
-  const session = useDocument(surface, previewInputActive);
+  const finishPreviewInput = async () => {
+    const editor = document.activeElement;
+    if (!previewActivity.current.has('draft') || previewActivity.current.has('composing') ||
+      !(editor instanceof HTMLElement) || !editor.matches('[data-reader-editable="true"]')) return false;
+    const sourceBefore = surface.current?.text();
+    editor.blur();
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    return !previewInputActive() && surface.current?.text() !== sourceBefore;
+  };
+  const session = useDocument(surface, previewInputActive, finishPreviewInput);
   const { view, source, selection, desktop, dirty, pending, confirmClose } = session;
   const plugins = useExtensions();
   const scriptPlugins = useScriptPlugins();
@@ -138,7 +147,7 @@ function App() {
     function keyboard(event: KeyboardEvent) {
       if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && !previewInputActive()) {
         menu.current?.removeAttribute('open');
-        if (!exportSnapshot && !settings && !paletteOpen && scriptCommand === null && !convertLineEndings && !confirmClose) {
+        if (!document.querySelector('dialog[open]')) {
           setPresentation(false);
           setSearchMode(null);
         }
@@ -243,6 +252,7 @@ function App() {
   useCommandShortcuts({
     commands, shortcuts, blocked: Boolean(settings || exportSnapshot || paletteOpen || scriptCommand !== null || convertLineEndings || confirmClose),
     canRun: (event, command) => {
+      if (document.querySelector('dialog[open]')) return false;
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest('[data-reader-editable="true"]') &&
         (command.scope === 'source' || command.id === 'edit.undo' || command.id === 'edit.redo')) return false;
@@ -314,7 +324,7 @@ function App() {
               </div>}
               {session.drafts.length > 0 && <div className="menu-group">
                 <div className="menu-heading">恢复草稿</div>
-                {session.drafts.map(item => <button type="button" key={item.id} title={item.path ?? item.name}
+                {session.drafts.slice(0, 20).map(item => <button type="button" key={item.id} title={item.path ?? item.name}
                   onClick={() => fileAction(() => void session.restore(item.id))}>{item.name}</button>)}
               </div>}
             </div>
@@ -415,7 +425,9 @@ function App() {
         event.currentTarget.value = '';
         if (file) void session.openBrowserFile(file);
       }} />
-      {settings && <Settings desktop={desktop} plugins={plugins} scripts={scriptPlugins} drafts={session.drafts} onDiscardDraft={session.discard}
+      {settings && <Settings desktop={desktop} plugins={plugins} scripts={scriptPlugins} drafts={session.drafts}
+        draftBusy={pending} draftError={session.error} onDiscardDraft={session.discard}
+        onRestoreDraft={async id => { if (await session.restore(id)) setSettings(null); }}
         onClose={() => setSettings(null)} launchDefaults={() => invoke('set_default_markdown_app')} shortcuts={shortcuts} commands={commands}
         initialTab={settings.tab} pluginQuery={settings.query} />}
       {paletteOpen && <CommandPalette commands={commands} shortcuts={shortcuts} onClose={() => setPaletteOpen(false)} />}
@@ -437,8 +449,13 @@ function App() {
             });
           });
         }} />}
-      {confirmClose && <CloseDraftDialog busy={pending} error={session.closeError} onClose={session.cancelClose}
-        onConfirm={() => void session.closeKeepingDraft()} />}
+      {session.documentConfirmation}
+      {confirmClose && <ConfirmationDialog title="关闭窗口" busy={pending} error={session.closeError}
+        description="保留草稿后，可从「设置 → 草稿」继续编辑。「丢弃」会删除本次未保存的修改和对应的恢复草稿。"
+        onCancel={session.cancelClose} actions={[
+          { label: '丢弃', variant: 'danger', onClick: () => void session.closeWindow('discard') },
+          { label: '关闭并保留草稿', variant: 'primary', onClick: () => void session.closeWindow('keep') },
+        ]} />}
     </div>
   );
 }

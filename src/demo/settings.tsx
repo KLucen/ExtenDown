@@ -16,9 +16,11 @@ import {
 } from '../core/plugins/script-store.ts';
 import { permissionDescriptions, type useScriptPlugins } from './script-commands';
 import { ShortcutSettings, type useShortcuts } from './commands';
+import { useConfirmation } from './confirmation-dialog';
 import type { EditorCommand } from '../core/editor-commands';
 import { COMPONENT_CATEGORIES, EXTENSION_STATE_LABELS, OFFICIAL_COMPONENTS, matchesComponent,
   type ComponentId, type ComponentCategory, type ExtensionState } from '../core/plugins/component-catalog.ts';
+import './draft-settings.css';
 
 const STORE_KEY = 'extendown.extensions.v1';
 const FORMATS = ['html', 'pdf', 'png', 'jpg'] as const;
@@ -287,17 +289,26 @@ function Components({ plugins, filter, desktop, installingComponent, onInstall }
   </>;
 }
 
-export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, onClose, launchDefaults, shortcuts, commands, initialTab = 'general', pluginQuery = '' }: {
+const SETTINGS_TABS = {
+  general: '常规', plugins: '插件', shortcuts: '快捷键', drafts: '草稿',
+} as const;
+export type SettingsTab = keyof typeof SETTINGS_TABS;
+
+export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false, draftError, onRestoreDraft, onDiscardDraft,
+  onClose, launchDefaults, shortcuts, commands, initialTab = 'general', pluginQuery = '' }: {
   desktop: boolean;
   plugins: Extensions;
   scripts: ReturnType<typeof useScriptPlugins>;
   drafts: RecoveryDraft[];
+  draftBusy?: boolean;
+  draftError?: string;
+  onRestoreDraft: (id: string) => Promise<unknown>;
   onDiscardDraft: (id: string) => Promise<void>;
   onClose: () => void;
   launchDefaults: () => Promise<{ supported: boolean; requested: boolean; message: string }>;
   shortcuts: ReturnType<typeof useShortcuts>;
   commands: readonly EditorCommand[];
-  initialTab?: 'general' | 'plugins' | 'shortcuts';
+  initialTab?: SettingsTab;
   pluginQuery?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -309,6 +320,7 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
   const [componentFeedback, setComponentFeedback] = useState<{ message: string; error?: boolean }>();
   const [tab, setTab] = useState(initialTab);
   const [filter, setFilter] = useState<PluginFilter>({ query: pluginQuery, category: 'all', state: 'all' });
+  const confirmation = useConfirmation();
   useEffect(() => { dialog.current?.showModal(); }, []);
 
   async function installOfficial(id: Component) {
@@ -332,7 +344,11 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
       const item = readPluginPackage(buffer);
       if ('source' in item) {
         const previous = await getScriptPlugin(item.manifest.id);
-        if (previous && !window.confirm(`将 ${item.manifest.name} 更新到 ${item.manifest.version}？更新后需重新启用，可从插件列表回滚。`)) return;
+        if (previous && !await confirmation.confirm({
+          title: '更新插件',
+          description: `将「${item.manifest.name}」更新到 ${item.manifest.version}。更新后需重新启用，可从插件列表回滚。`,
+          confirmLabel: '更新',
+        })) return;
         await installScriptPlugin(item, previous?.current.manifest.version ?? null, previous?.generation);
         setStatus(`已安装 ${item.manifest.name} ${item.manifest.version}。请在列表中启用此版本。`);
       } else {
@@ -364,11 +380,27 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
     const { id, name, version } = record.current.manifest;
     if (action === 'toggle' && !record.enabled) {
       const permissions = permissionDescriptions(record.current);
-      const description = permissions.length ? permissions.join('\n') : '此插件请求的文档权限为空。';
-      if (!window.confirm(`启用 ${name} ${version}？\n\n${description}`)) return;
+      if (!await confirmation.confirm({
+        title: '启用插件',
+        description: <>
+          <p>启用「{name}」{version}。</p>
+          {permissions.length ? <ul>{permissions.map(permission => <li key={permission}>{permission}</li>)}</ul>
+            : <p>此插件不请求文档权限。</p>}
+        </>,
+        confirmLabel: '启用',
+      })) return;
     }
-    if (action === 'rollback' && !window.confirm(`将 ${name} 回滚到 ${record.previous?.manifest.version}？回滚后需重新启用。`)) return;
-    if (action === 'remove' && !window.confirm(`卸载 ${name} 及其回滚版本？`)) return;
+    if (action === 'rollback' && (!record.previous || !await confirmation.confirm({
+      title: '回滚插件',
+      description: `将「${name}」回滚到 ${record.previous.manifest.version}。回滚后需重新启用。`,
+      confirmLabel: '回滚',
+    }))) return;
+    if (action === 'remove' && !await confirmation.confirm({
+      title: '卸载插件',
+      description: `卸载「${name}」及其回滚版本。`,
+      confirmLabel: '卸载',
+      variant: 'danger',
+    })) return;
     setPackageBusy(true);
     setError('');
     setStatus('');
@@ -410,6 +442,16 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
     }));
   }
 
+  async function discardDraft(draft: RecoveryDraft) {
+    if (draftBusy || !await confirmation.confirm({
+      title: '移除恢复草稿',
+      description: `移除「${draft.name}」的恢复草稿。草稿里的未保存更改会丢失。`,
+      confirmLabel: '移除草稿',
+      variant: 'danger',
+    })) return;
+    await onDiscardDraft(draft.id);
+  }
+
   const selectedTheme = [DARK_THEME, ...plugins.themes].some(theme => theme.id === plugins.preferences.theme)
     ? plugins.preferences.theme : 'core.light';
   const visibleThemes = plugins.preferences.packages.filter(item =>
@@ -420,15 +462,14 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
     (filter.category === 'all' || filter.category === 'command') &&
     (filter.state === 'all' || filter.state === (record.enabled ? 'enabled' : 'disabled')) &&
     matchesComponent(filter.query, record.current.manifest.name, record.current.manifest.id, ...record.current.manifest.contributes));
-  return <dialog className="settings-modal" ref={dialog} aria-labelledby="settings-title" onClose={onClose}>
+  return <>
+  <dialog className="settings-modal" ref={dialog} aria-labelledby="settings-title" onClose={onClose}>
     <div className="modal-head"><h2 id="settings-title">设置</h2>
       <button type="button" aria-label="关闭设置" onClick={() => dialog.current?.close()}>×</button>
     </div>
-    <div className="settings-tabs" aria-label="设置类别">
-      {(['general', 'plugins', 'shortcuts'] as const).map(value =>
-        <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>
-          {{ general: '常规', plugins: '插件', shortcuts: '快捷键' }[value]}
-        </button>)}
+    <div className="settings-tabs" role="group" aria-label="设置类别">
+      {(Object.entries(SETTINGS_TABS) as [SettingsTab, string][]).map(([value, label]) =>
+        <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>{label}</button>)}
     </div>
     {tab === 'general' ? <>
       <section className="settings-section">
@@ -445,16 +486,25 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
         <p>安装 ExtenDown 后，可在 Windows“默认应用”中搜索 .md 或 .markdown，并选择要使用的程序。</p>
         {desktop && <button className="setting-action" type="button" onClick={defaults}>选择 .md 默认应用</button>}
       </section>
-      {drafts.length > 0 && <section className="settings-section">
-        <h3>恢复草稿</h3>
-        {drafts.map(draft => <div className="plugin-row" key={draft.id}>
-          <span title={draft.path ?? draft.name}>{draft.name}</span>
-          <button type="button" onClick={() => {
-            if (window.confirm('移除这份恢复草稿？')) void onDiscardDraft(draft.id);
-          }}>移除</button>
-        </div>)}
-      </section>}
-    </> : tab === 'shortcuts' ? <section className="settings-section">
+    </> : tab === 'drafts' ? <section className="settings-section draft-settings" aria-labelledby="draft-settings-title"
+      aria-busy={draftBusy || undefined}>
+      <h3 id="draft-settings-title">恢复草稿</h3>
+      {draftError && <p role="alert" className="draft-settings-error">{draftError}</p>}
+      {drafts.length > 0 ? <ul className="draft-list">
+        {drafts.map(draft => <li key={draft.id} className="draft-row">
+          <div className="draft-file">
+            <strong title={draft.name}>{draft.name}</strong>
+            <small title={draft.path ?? undefined}>{draft.path ?? '未关联文件'}</small>
+          </div>
+          <div className="draft-actions">
+            <button type="button" className="setting-action" disabled={draftBusy}
+              aria-label={`恢复 ${draft.name}`} onClick={() => void onRestoreDraft(draft.id)}>恢复</button>
+            <button type="button" className="setting-action draft-remove" disabled={draftBusy}
+              aria-label={`移除 ${draft.name}`} onClick={() => void discardDraft(draft)}>移除</button>
+          </div>
+        </li>)}
+      </ul> : <p>{desktop ? '暂无可恢复的草稿。' : '桌面版支持恢复草稿。'}</p>}
+    </section> : tab === 'shortcuts' ? <section className="settings-section">
       <ShortcutSettings shortcuts={shortcuts} commands={commands} />
     </section> : <section className="settings-section">
       <div className="plugin-filters">
@@ -518,9 +568,11 @@ export function Settings({ desktop, plugins, scripts, drafts, onDiscardDraft, on
         finally { setPackageBusy(false); }
       }} />
     </section>}
-    {(status || error) && <div className="settings-section">
+    {tab !== 'drafts' && (status || error) && <div className="settings-section">
       {status && <p role="status">{status}</p>}
       {error && <p role="alert" className="error">{error}</p>}
     </div>}
-  </dialog>;
+  </dialog>
+  {confirmation.dialog}
+  </>;
 }

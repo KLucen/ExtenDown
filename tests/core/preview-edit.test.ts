@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPreviewFormatPatch, buildPreviewTablePatch, buildPreviewTextPatch, collectPreviewEdits, type PreviewSourcePatch } from '../../src/core/preview-edit.ts';
+import { buildPreviewFormatPatch, buildPreviewParagraphSplitPatch, buildPreviewTablePatch, buildPreviewTextPatch, collectPreviewEdits, type PreviewSourcePatch } from '../../src/core/preview-edit.ts';
 
 const apply = (source: string, patch: PreviewSourcePatch) => {
   assert.equal(source.slice(patch.from, patch.to), patch.expected);
@@ -40,6 +40,50 @@ test('preview starts the first paragraph in empty documents, preserving a BOM', 
     assert.equal(buildPreviewTextPatch(source, 0, '', '多行\n正文', false), null);
   }
   assert.equal(buildPreviewTextPatch('已有段落', 0, '', '覆盖', false), null);
+});
+
+test('preview edits multiple styled leaves in one commit and preserves their Markdown delimiters', () => {
+  const source = '\uFEFF**原文** and _italic_ &amp; end\r\n';
+  const previous = '原文 and italic & end';
+  const patch = buildPreviewTextPatch(source, 0, previous, '新文 and *原样* & end', false, false, [
+    { type: 'strong', children: ['新文'] }, ' and ', { type: 'emphasis', children: ['*原样*'] }, ' & end',
+  ]);
+  assert.ok(patch);
+  assert.equal(apply(source, patch), '\uFEFF**新文** and _\\*原样\\*_ &amp; end\r\n');
+  assert.equal(buildPreviewTextPatch(source, 0, previous, 'changes and italic & end', false, false, [
+    'changes and ', { type: 'emphasis', children: ['italic'] }, ' & end',
+  ]), null);
+  const deletion = buildPreviewTextPatch('**文字**\n\n后续', 0, '文字', '', false);
+  assert.ok(deletion);
+  assert.equal(apply('**文字**\n\n后续', deletion), '\n\n后续');
+});
+
+test('Enter splits a styled paragraph with pending edits, restores delimiters and preserves the file line ending', () => {
+  const source = '\uFEFF一段 **原文** _文字_\r\n\r\n另一段\r\n';
+  const previous = '一段 原文 文字';
+  const text = '一段 新文 后半';
+  const patch = buildPreviewParagraphSplitPatch(source, 0, previous, text, { start: 4, end: 4 }, false, false, [
+    '一段 ', { type: 'strong', children: ['新文'] }, ' ', { type: 'emphasis', children: ['后半'] },
+  ]);
+  assert.ok(patch);
+  const next = apply(source, patch);
+  assert.equal(next, '\uFEFF一段 **新**\r\n\r\n**文** _后半_\r\n\r\n另一段\r\n');
+  assert.equal(next.slice(patch.nextBlock + 1).split('\r\n')[0], '**文** _后半_');
+  assert.equal(patch.empty, false);
+});
+
+test('Enter makes a new empty paragraph at the current boundary and rejects splitting a grapheme', () => {
+  const source = 'First 👩‍💻\n\nNext';
+  const previous = 'First 👩‍💻';
+  assert.equal(buildPreviewParagraphSplitPatch(source, 0, previous, previous, { start: 7, end: 7 }, false), null);
+  const split = buildPreviewParagraphSplitPatch(source, 0, previous, previous,
+    { start: previous.length, end: previous.length }, false);
+  assert.ok(split);
+  assert.equal(split.empty, true);
+  const next = apply(source, split);
+  const insert = buildPreviewTextPatch(next, split.nextBlock, '', 'Middle', false, true);
+  assert.ok(insert);
+  assert.equal(apply(next, insert), 'First 👩‍💻\n\nMiddle\n\nNext');
 });
 
 test('preview formatting joins native text and the shared formatting command in one patch', () => {

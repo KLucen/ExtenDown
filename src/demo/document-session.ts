@@ -1,7 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { editorToMarkdownText, markdownToEditorText } from '../core/editor-text';
 import { decodeMarkdownBytes, encodeMarkdownBytes } from '../core/markdown-source';
@@ -94,14 +94,15 @@ export function downloadMarkdown(view: DocumentView, current: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, previewInputActive?: () => boolean,
-  onConfirmClose?: () => void) {
+export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, previewInputActive?: () => boolean) {
   const desktop = isTauri();
   const [view, setView] = useState(() => localDocument(desktop ? '未命名.md' : '示例.md', desktop ? '' : EXAMPLE, 0));
   const [source, setSource] = useState(view.initialSource);
   const [selection, setSelection] = useState(START_SELECTION);
   const [draftDirty, setDraftDirty] = useState(false);
   const [pending, setPending] = useState(desktop);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [closeError, setCloseError] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [conflict, setConflict] = useState(false);
@@ -120,6 +121,39 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
   previewInput.current = previewInputActive;
   const dirty = draftDirty || source !== view.initialSource;
   protection.current = { dirty, saving: pending };
+
+  async function keepDraft() {
+    await draftWork.current;
+    if (desktop && dirty && view.documentId) {
+      await invoke('write_markdown_draft', {
+        documentId: view.documentId, source: surface.current?.text() ?? source, revision: view.revision,
+      });
+    } else if (desktop && view.documentId) {
+      await invoke('clear_markdown_draft', { documentId: view.documentId });
+    }
+  }
+  const closeDraft = useRef(keepDraft);
+  closeDraft.current = keepDraft;
+
+  const closeKeepingDraft = useCallback(async (confirmed: boolean) => {
+    if (operation.current || protection.current.saving || surface.current?.composing() || previewInput.current?.()) {
+      if (confirmed) setCloseError('请先完成当前操作或输入法候选。');
+      return;
+    }
+    operation.current = true;
+    setPending(true);
+    setCloseError('');
+    try {
+      await closeDraft.current();
+      await getCurrentWindow().destroy();
+    } catch (reason) {
+      operation.current = false;
+      setPending(false);
+      const message = errorMessage(reason, '无法关闭窗口。');
+      if (confirmed) setCloseError(message);
+      else setError(message);
+    }
+  }, [surface]);
 
   function applyOpened(opened: NativeDocument) {
     const normalized = markdownToEditorText(opened.source);
@@ -182,18 +216,10 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
           return;
         }
         if (protection.current.dirty) {
-          onConfirmClose?.();
+          setConfirmClose(true);
           return;
         }
-        if (operation.current) return;
-        operation.current = true;
-        try {
-          await closeDraft.current();
-          await nativeWindow.destroy();
-        } catch (reason) {
-          operation.current = false;
-          setError(errorMessage(reason, '无法关闭窗口。'));
-        }
+        await closeKeepingDraft(false);
       }),
       listen<string>('extendown://document-open-error', event => {
         if (active) setError(errorMessage(event.payload, '无法打开拖入的文件。'));
@@ -217,7 +243,7 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
       active = false;
       for (const subscription of subscriptions) void subscription.then(unlisten => unlisten()).catch(() => undefined);
     };
-  }, [desktop, onConfirmClose, surface]);
+  }, [closeKeepingDraft, desktop, surface]);
 
   useEffect(() => {
     if (!desktop || !view.documentId) return;
@@ -257,35 +283,6 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
     } finally {
       operation.current = false;
       setPending(false);
-    }
-  }
-
-  async function keepDraft() {
-    await draftWork.current;
-    if (desktop && dirty && view.documentId) {
-      await invoke('write_markdown_draft', {
-        documentId: view.documentId, source: surface.current?.text() ?? source, revision: view.revision,
-      });
-    } else if (desktop && view.documentId) {
-      await invoke('clear_markdown_draft', { documentId: view.documentId });
-    }
-  }
-  const closeDraft = useRef(keepDraft);
-  closeDraft.current = keepDraft;
-
-  async function closeKeepingDraft() {
-    if (operation.current || protection.current.saving) return false;
-    operation.current = true;
-    setPending(true);
-    try {
-      await closeDraft.current();
-      await getCurrentWindow().destroy();
-      return true;
-    } catch (reason) {
-      operation.current = false;
-      setPending(false);
-      setError(errorMessage(reason, '无法关闭窗口。'));
-      return false;
     }
   }
 
@@ -395,7 +392,14 @@ export function useDocument(surface: RefObject<SourceSurfaceHandle | null>, prev
 
   return {
     desktop, view, source, selection, setSelection, dirty, pending, notice, setNotice, error, setError, conflict, recent, drafts,
-    canLeaveInput, closeKeepingDraft, edit, openBrowserFile, normalizeLineEndings, save, perform,
+    canLeaveInput, edit, openBrowserFile, normalizeLineEndings, save, perform,
+    confirmClose, closeError,
+    closeKeepingDraft: () => closeKeepingDraft(true),
+    cancelClose: () => {
+      if (operation.current) return;
+      setConfirmClose(false);
+      setCloseError('');
+    },
     openWorkspaceFile, renameWorkspaceEntry, workspaceLocation, noteWorkspaceDiskStatus,
     open: () => replace(() => invoke('open_markdown')),
     newDocument: () => replace(() => desktop ? invoke('new_markdown') : Promise.resolve({

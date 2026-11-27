@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 
-export function CloseDraftDialog({ busy = false, onClose, onConfirm }: {
-  busy?: boolean;
+export function CloseDraftDialog({ busy, error, onClose, onConfirm }: {
+  busy: boolean;
+  error: string;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -24,7 +25,8 @@ export function CloseDraftDialog({ busy = false, onClose, onConfirm }: {
       <button type="button" aria-label="取消关闭" disabled={busy} onClick={onClose}>×</button>
     </header>
     <div className="settings-section">
-      <p id="close-draft-description">关闭窗口并保留恢复草稿？</p>
+      <p id="close-draft-description">未保存的修改将保留为恢复草稿。下次可从「文件 → 恢复草稿」继续编辑。</p>
+      {error && <p className="error" role="alert">{error}</p>}
       <div className="close-draft-actions">
         <button ref={cancel} type="button" className="setting-action" disabled={busy} onClick={onClose}>取消</button>
         <button type="button" className="close-draft-confirm" disabled={busy} onClick={onConfirm}>

@@ -55,10 +55,8 @@ function App() {
   const menu = useRef<HTMLDetailsElement>(null);
   const previewActivity = useRef(new Set<string>());
   const previewInputActive = () => previewActivity.current.size > 0;
-  const [confirmClose, setConfirmClose] = useState(false);
-  const [closeBusy, setCloseBusy] = useState(false);
-  const session = useDocument(surface, previewInputActive, () => setConfirmClose(true));
-  const { view, source, selection, desktop, dirty, pending } = session;
+  const session = useDocument(surface, previewInputActive);
+  const { view, source, selection, desktop, dirty, pending, confirmClose } = session;
   const plugins = useExtensions();
   const scriptPlugins = useScriptPlugins();
   const windowsChrome = desktop && /\bWindows\b/u.test(navigator.userAgent);
@@ -439,13 +437,8 @@ function App() {
             });
           });
         }} />}
-      {confirmClose && <CloseDraftDialog busy={closeBusy} onClose={() => setConfirmClose(false)} onConfirm={() => {
-        setCloseBusy(true);
-        void session.closeKeepingDraft().then(closed => {
-          setCloseBusy(false);
-          if (closed) setConfirmClose(false);
-        });
-      }} />}
+      {confirmClose && <CloseDraftDialog busy={pending} error={session.closeError} onClose={session.cancelClose}
+        onConfirm={() => void session.closeKeepingDraft()} />}
     </div>
   );
 }

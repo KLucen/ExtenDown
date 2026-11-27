@@ -4,6 +4,7 @@ mod components;
 mod document;
 mod export;
 mod recovery;
+mod updates;
 mod workspace;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -608,6 +609,8 @@ fn main() {
             read_document_image,
             open_plugin_package,
             set_default_markdown_app,
+            updates::check_for_updates,
+            updates::open_update_release,
             export::save_export,
             components::installed_components,
             components::install_official_component,

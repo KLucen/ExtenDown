@@ -124,6 +124,7 @@ dialog::backdrop { background: #14221c55; }
 .setting-field select { padding: 4px 8px; }
 .setting-action { justify-self: start; padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); color: var(--accent); }
 .setting-action:hover { border-color: var(--accent); }
+.update-status:empty { display: none; }
 .line-ending-options { display: grid; gap: 6px; padding: 0; margin: 4px 0 0; border: 0; }
 .line-ending-options legend { margin-bottom: 6px; font-weight: 600; }
 .line-ending-options label { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }

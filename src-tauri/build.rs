@@ -19,6 +19,8 @@ fn main() {
             "read_document_image",
             "open_plugin_package",
             "set_default_markdown_app",
+            "check_for_updates",
+            "open_update_release",
             "save_export",
             "installed_components",
             "install_official_component",

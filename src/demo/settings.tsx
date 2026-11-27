@@ -17,6 +17,7 @@ import {
 import { permissionDescriptions, type useScriptPlugins } from './script-commands';
 import { ShortcutSettings, type useShortcuts } from './commands';
 import { useConfirmation } from './confirmation-dialog';
+import { UpdateSettings } from './update-settings';
 import type { EditorCommand } from '../core/editor-commands';
 import { COMPONENT_CATEGORIES, EXTENSION_STATE_LABELS, OFFICIAL_COMPONENTS, matchesComponent,
   type ComponentId, type ComponentCategory, type ExtensionState } from '../core/plugins/component-catalog.ts';
@@ -486,6 +487,7 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
         <p>安装 ExtenDown 后，可在 Windows“默认应用”中搜索 .md 或 .markdown，并选择要使用的程序。</p>
         {desktop && <button className="setting-action" type="button" onClick={defaults}>选择 .md 默认应用</button>}
       </section>
+      <UpdateSettings desktop={desktop} />
     </> : tab === 'drafts' ? <section className="settings-section draft-settings" aria-labelledby="draft-settings-title"
       aria-busy={draftBusy || undefined}>
       <h3 id="draft-settings-title">恢复草稿</h3>

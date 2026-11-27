@@ -4,6 +4,7 @@
   "description": "ExtenDown main window document commands and window creation are registered by the Rust host.",
   "windows": ["main", "document-*"],
   "permissions": [
+    "core:app:allow-version",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-close",
@@ -29,6 +30,8 @@
     "allow-read-document-image",
     "allow-open-plugin-package",
     "allow-set-default-markdown-app",
+    "allow-check-for-updates",
+    "allow-open-update-release",
     "allow-save-export",
     "allow-installed-components",
     "allow-install-official-component",

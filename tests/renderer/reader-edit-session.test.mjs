@@ -9,7 +9,7 @@ function deferred() {
 }
 const settled = () => new Promise(resolve => setImmediate(resolve));
 
-function harness(onCommit = () => Promise.resolve(true)) {
+function harness(onCommit = () => Promise.resolve(true), onSync) {
   let dom = '正文';
   let focused = false;
   let connected = true;
@@ -32,6 +32,7 @@ function harness(onCommit = () => Promise.resolve(true)) {
     isFocused: () => focused,
     restoreChildren: () => { restores++; dom = '正文'; },
     onCommit: text => { commits.push(text); return onCommit(text); },
+    onSync,
     onDraftChange: dirty => drafts.push(dirty),
     onCommittingChange: active => {
       activity += active ? 1 : -1;
@@ -56,6 +57,60 @@ function harness(onCommit = () => Promise.resolve(true)) {
     finish(stale) { flush(frames, stale); flush(tasks, stale); },
   };
 }
+
+test('ordinary input syncs in focus and confirmed composition syncs once', () => {
+  const synced = [];
+  const h = harness(undefined, text => { synced.push(text); return true; });
+  h.focus();
+  h.input('正文实时');
+  assert.deepEqual(synced, ['正文实时']);
+  h.session.compositionStart();
+  h.input('正文实时ni');
+  h.session.compositionEnd();
+  h.input('正文实时你');
+  assert.deepEqual(synced, ['正文实时']);
+  h.finish();
+  assert.deepEqual(synced, ['正文实时', '正文实时你']);
+  h.blur();
+  assert.deepEqual(h.commits, []);
+  assert.equal(h.drafts.at(-1), false);
+});
+
+test('rejected live input can become valid without leaving the preview editor', () => {
+  const h = harness(undefined, text => text === '正文完成');
+  h.focus();
+  h.input('正文完');
+  assert.equal(h.drafts.at(-1), true);
+  assert.equal(h.dom, '正文完');
+  h.input('正文完成');
+  assert.equal(h.drafts.at(-1), false);
+  h.blur();
+  assert.deepEqual(h.commits, []);
+  assert.deepEqual(h.restrictions, []);
+});
+
+test('preview edit sessions retain soft line breaks for a mapped paragraph', async () => {
+  let dom = '33\n44\n22\n445';
+  const commits = [];
+  const session = createReaderEditSession({
+    sourceText: dom,
+    allowMultiline: true,
+    readText: () => dom,
+    isFocused: () => false,
+    restoreChildren: () => {},
+    onCommit: text => { commits.push(text); return Promise.resolve(true); },
+    onDraftChange: () => {},
+    onCommittingChange: () => {},
+    onRestricted: reason => { throw Error(reason); },
+    scheduler: { frame: run => { run(); return () => {}; }, task: run => { run(); return () => {}; } },
+  });
+  session.focus();
+  dom = '33\n44\n22\n4456';
+  session.input();
+  session.blur();
+  await Promise.resolve();
+  assert.deepEqual(commits, ['33\n44\n22\n4456']);
+});
 function composeThenBlur(h) {
   h.focus();
   h.session.compositionStart();

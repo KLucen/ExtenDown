@@ -585,11 +585,85 @@ const MAX_SEARCH_ENTRIES: usize = 20_000;
 const MAX_SEARCH_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_SEARCH_RESULTS: usize = 200;
 const MAX_DIRECTORY_ENTRIES: usize = 10_000;
+const MAX_WORKSPACE_DOCUMENTS: usize = 20_000;
 
 #[derive(Serialize)]
 pub struct DirectoryListing {
     entries: Vec<Entry>,
     limited: bool,
+}
+
+#[derive(Serialize)]
+pub struct DocumentListing {
+    entries: Vec<Entry>,
+    limited: bool,
+    skipped: usize,
+}
+
+fn documents(root: &Root) -> CommandResult<DocumentListing> {
+    let mut queue = vec![PathBuf::new()];
+    let mut visited = HashSet::new();
+    let mut documents = Vec::new();
+    let mut limited = false;
+    let mut skipped = 0;
+
+    'directories: while let Some(directory) = queue.pop() {
+        let listing = root.resolve(&directory).and_then(|canonical| {
+            if !visited.insert(canonical.clone()) {
+                return Ok(None);
+            }
+            entries(root, &directory, &canonical).map(Some)
+        });
+        let Some(listing) = (match listing {
+            Ok(listing) => listing,
+            Err(error) if directory.as_os_str().is_empty() => return Err(error),
+            Err(_) => {
+                skipped += 1;
+                None
+            }
+        }) else {
+            continue;
+        };
+        limited |= listing.limited;
+        for entry in listing.entries {
+            if entry.directory {
+                if !entry.linked {
+                    if let Ok(path) = relative_path(&entry.path) {
+                        queue.push(path);
+                    } else {
+                        limited = true;
+                    }
+                }
+                continue;
+            }
+            if !entry.document {
+                continue;
+            }
+            if documents.len() >= MAX_WORKSPACE_DOCUMENTS {
+                limited = true;
+                break 'directories;
+            }
+            documents.push(entry);
+        }
+    }
+
+    documents.sort_by_cached_key(|entry| (entry.path.to_lowercase(), entry.path.clone()));
+    Ok(DocumentListing {
+        entries: documents,
+        limited,
+        skipped,
+    })
+}
+
+#[tauri::command]
+pub async fn workspace_documents(
+    window: WebviewWindow,
+    workspace_id: String,
+) -> CommandResult<DocumentListing> {
+    let root = workspace(&window, &workspace_id)?;
+    tauri::async_runtime::spawn_blocking(move || documents(&root))
+        .await
+        .map_err(|_| "workspace-read-failed")?
 }
 
 fn search(root: &Root, query: &str, in_contents: bool) -> CommandResult<SearchResults> {
@@ -825,6 +899,35 @@ mod tests {
             "notes/中文.md"
         );
         assert_eq!(search(&root, "命中", true).unwrap().hits[0].line, Some(3));
+    }
+
+    #[test]
+    fn lists_all_markdown_documents_recursively() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = root(folder.path());
+        fs::create_dir_all(root.path.join("docs/nested")).unwrap();
+        fs::write(root.path.join("README.md"), "# root").unwrap();
+        fs::write(root.path.join("docs/guide.markdown"), "# guide").unwrap();
+        fs::write(root.path.join("docs/nested/plain.txt"), "text").unwrap();
+        fs::write(root.path.join("docs/nested/image.png"), b"png").unwrap();
+
+        let listing = documents(&root).unwrap();
+        assert!(!listing.limited);
+        assert_eq!(listing.skipped, 0);
+        assert_eq!(
+            listing
+                .entries
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["docs/guide.markdown", "docs/nested/plain.txt", "README.md"]
+        );
+        assert!(
+            listing
+                .entries
+                .iter()
+                .all(|entry| entry.document && !entry.directory)
+        );
     }
 
     #[test]

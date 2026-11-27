@@ -32,6 +32,54 @@ test('preview text treats markup typed into a paragraph as plain text', () => {
   assert.equal(apply(source, formula), '原样显示 \\$x\\$\r\n\r\n另一段\r\n');
 });
 
+test('live preview can publish a trailing space and then continue the next word', () => {
+  const initial = 'First\n\nSecond';
+  const space = buildPreviewTextPatch(initial, 0, 'First', 'First ', false);
+  assert.ok(space);
+  const spaced = apply(initial, space);
+  assert.equal(spaced, 'First \n\nSecond');
+  const word = buildPreviewTextPatch(spaced, 0, 'First ', 'First word', false);
+  assert.ok(word);
+  assert.equal(apply(spaced, word), 'First word\n\nSecond');
+  assert.ok(buildPreviewParagraphSplitPatch(spaced, 0, 'First ', 'First ',
+    { start: 6, end: 6, direction: 'none' }, false));
+});
+
+test('a heading cleared in live preview can be typed again', () => {
+  const source = '## title\n\nOther text';
+  const clear = buildPreviewTextPatch(source, 0, 'title', '', false);
+  assert.ok(clear);
+  const blank = apply(source, clear);
+  assert.equal(collectPreviewEdits(blank).text.get(0), '');
+  const rewrite = buildPreviewTextPatch(blank, 0, '', 'new title', false);
+  assert.ok(rewrite);
+  assert.equal(apply(blank, rewrite), '## new title\n\nOther text');
+});
+
+test('preview keeps soft line breaks visible and maps edits inside later lines', () => {
+  const source = ['123123', '', '33', '44', '22', '445'].join('\n');
+  const edits = collectPreviewEdits(source, false);
+  const offset = source.indexOf('33');
+  assert.equal(edits.text.get(offset), '33\n44\n22\n445');
+  assert.ok(edits.paragraphs.has(offset));
+  const patch = buildPreviewTextPatch(source, offset, '33\n44\n22\n445', '33\n44\n22\n4456', false);
+  assert.ok(patch);
+  assert.equal(apply(source, patch), source + '6');
+});
+
+test('Enter splits an existing soft-break paragraph and keeps both preview blocks editable', () => {
+  const source = ['33', '44', '22', '445'].join('\n');
+  const previous = '33\n44\n22\n445';
+  const split = buildPreviewParagraphSplitPatch(source, 0, previous, previous,
+    { start: 6, end: 6, direction: 'none' }, false);
+  assert.ok(split);
+  const next = apply(source, split);
+  assert.equal(next, '33\n44\n\n22\n445');
+  const edits = collectPreviewEdits(next, false);
+  assert.equal(edits.text.get(0), '33\n44');
+  assert.equal(edits.text.get(split.nextBlock), '22\n445');
+});
+
 test('preview starts the first paragraph in empty documents, preserving a BOM', () => {
   for (const source of ['', '\uFEFF']) {
     const patch = buildPreviewTextPatch(source, 0, '', '新的 **段落**', false);

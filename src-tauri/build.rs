@@ -25,6 +25,7 @@ fn main() {
             "choose_workspace",
             "close_workspace",
             "workspace_list",
+            "workspace_documents",
             "workspace_open",
             "workspace_current_file",
             "workspace_initial_location",

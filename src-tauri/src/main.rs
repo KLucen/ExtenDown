@@ -614,6 +614,7 @@ fn main() {
             workspace::choose_workspace,
             workspace::close_workspace,
             workspace::workspace_list,
+            workspace::workspace_documents,
             workspace::workspace_open,
             workspace::workspace_current_file,
             workspace::workspace_initial_location,

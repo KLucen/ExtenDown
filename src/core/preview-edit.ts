@@ -100,9 +100,10 @@ function tableDraft(snapshot: MarkdownSnapshot, table: Table): PreviewTableDraft
 export function collectPreviewEdits(source: string | MarkdownSnapshot, math = false) {
   const snapshot = typeof source === 'string' ? parseMarkdownSnapshot(source, { math }) : source;
   const map = selectionMapFromSnapshot(snapshot, snapshot.bomOffset ? 3 : 0);
-  const mappedBlocks = new Map(map.blocks.filter(block => block.supported && !/[\r\n]/u.test(
-    map.source.slice(block.blockStart, block.blockEnd),
-  )).map(block => [block.blockStart, block]));
+  // Keep paragraphs containing Markdown soft line breaks editable. Their
+  // changed ranges are still checked by the source mapper before commit.
+  const mappedBlocks = new Map(map.blocks.filter(block => block.supported)
+    .map(block => [block.blockStart, block]));
   const text = new Map<number, string>();
   const paragraphs = new Set<number>();
   const tasks = new Map<number, PreviewSourcePatch>();
@@ -116,8 +117,8 @@ export function collectPreviewEdits(source: string | MarkdownSnapshot, math = fa
       const start = span.from - snapshot.bomOffset;
       if ((node.type === 'paragraph' || node.type === 'heading') && editableInline(node.children)) {
         const block = mappedBlocks.get(start);
-        if (block) {
-          text.set(start, block.visibleText);
+        if (block || (node.type === 'heading' && node.children.length === 0)) {
+          text.set(start, block?.visibleText ?? '');
           if (topLevel && node.type === 'paragraph') paragraphs.add(start);
         }
       }
@@ -168,12 +169,31 @@ export function buildPreviewTextPatch(source: string, blockStart: number, previo
     return !next || matchesVisibleText(content) ? { from, to: from, expected: '', insert } : null;
   }
   const span = original && spanFromNode(snapshot, original);
-  if (!original || !span || visibleInlineText(original.children) !== previous || /[\r\n]/u.test(span.expected)) return null;
+  if (!original || !span) return null;
+  const visible = visibleInlineText(original.children);
+  // Markdown trims a paragraph's trailing spaces, but the editing DOM can
+  // keep them while the user types the next word.
+  if (original.type === 'paragraph' && original.children.length === 1 && original.children[0].type === 'text' &&
+      span.expected === previous && (previous !== visible || /[ \t]$/u.test(next)) &&
+      !/[\r\n\u0000\uD800-\uDFFF]/u.test(next) && next.trimEnd()) {
+    const block = editableTextNode(parseMarkdownSnapshot(source.slice(0, span.from) + next + source.slice(span.to), { math }).root, blockStart);
+    if (block?.type === 'paragraph' && block.children.length === 1 &&
+        block.children[0].type === 'text' && block.children[0].value === next.trimEnd()) {
+      return { ...span, insert: next };
+    }
+  }
+  if (visible !== previous) return null;
   if (!next) return { ...span, insert: original.type === 'heading' ? '#'.repeat(original.depth) : '' };
+  if (!previous && original.type === 'heading' && !/[\r\n\u0000\uD800-\uDFFF]/u.test(next)) {
+    const insert = '#'.repeat(original.depth) + ' ' + escapePreviewText(next, math);
+    return matchesVisibleText(source.slice(0, span.from) + insert + source.slice(span.to)) ? { ...span, insert } : null;
+  }
   const range = { blockStart, sourceText: previous, replacement: next };
-  let edit = applyReaderMappedTextEdit(source, bomBytes, range, { allowEncoded: true });
+  let edit = applyReaderMappedTextEdit(source, bomBytes, range, { allowEncoded: true, allowMultiline: true });
   if (edit.ok && !matchesVisibleText(edit.content)) {
-    edit = applyReaderMappedTextEdit(source, bomBytes, range, { allowEncoded: true, encode: value => escapePreviewText(value, math) });
+    edit = applyReaderMappedTextEdit(source, bomBytes, range, {
+      allowEncoded: true, allowMultiline: true, encode: value => escapePreviewText(value, math),
+    });
   }
   if (!edit.ok || !matchesVisibleText(edit.content)) {
     const patch = inline && patchPreviewInline(snapshot, original.children, inline, math);
@@ -231,7 +251,8 @@ export function buildPreviewParagraphSplitPatch(source: string, blockStart: numb
   const to = span?.to ?? from;
   if (from < snapshot.bomOffset || to > source.length) return null;
   const originalText = collectPreviewEdits(snapshot).text.get(blockStart);
-  if ((emptyParagraph ? '' : originalText) !== previous) return null;
+  if ((emptyParagraph ? '' : originalText) !== previous &&
+      (span?.expected !== previous || originalText !== previous.replace(/[ \t]+$/u, ''))) return null;
 
   const textPatch = previous !== text ? buildPreviewTextPatch(source, blockStart, previous, text, math, emptyParagraph, inline) : null;
   if (previous !== text && !textPatch) return null;

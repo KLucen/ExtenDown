@@ -3,7 +3,7 @@ import { StateEffect } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { StrictMode, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { editorSelectionPosition, markdownToEditorText } from '../core/editor-text';
 import { buildSourceCommandPatch, EDITOR_COMMANDS, isSourceCommand, shortcutLabel, type EditorCommand, type EditorCommandId, type SourcePatch } from '../core/editor-commands';
@@ -62,7 +62,7 @@ function App() {
     const sourceBefore = surface.current?.text();
     editor.blur();
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-    return !previewInputActive() && surface.current?.text() !== sourceBefore;
+    return !previewInputActive() && sourceBefore !== surface.current?.text();
   };
   const session = useDocument(surface, previewInputActive, finishPreviewInput);
   const { view, source, selection, desktop, dirty, pending, confirmClose } = session;
@@ -85,9 +85,11 @@ function App() {
   const [presentation, setPresentation] = useState(false);
   const mixed = view.format.lineEnding === 'mixed';
   const revision = session.currentRevision();
-  const previewInput = useMemo(() => ({ key: view.key, source, revision }), [view.key, source, revision]);
-  const deferred = useDeferredValue(previewInput);
-  const previewSource = deferred.key === view.key ? deferred.source : source;
+  // Preview editing uses source offsets for every direct edit. Rendering a
+  // deferred snapshot here lets CodeMirror publish one revision while the
+  // preview still exposes ranges from an older revision, which makes edits
+  // appear stale and can invalidate the block after an Enter split.
+  const previewSource = source;
   const outline = useMemo(() => outlineOpen ? buildSourceOutline(previewSource) : [], [previewSource, outlineOpen]);
   const cursor = useMemo(() => editorSelectionPosition(source, selection.start, selection.end), [source, selection]);
   const resolveImage = session.resolveImage;
@@ -271,20 +273,21 @@ function App() {
       session.currentSource().slice(request.from, request.to) === request.expected;
   }
   const editing: PreviewEditing = {
-    documentKey: String(view.key), revision: deferred.key === view.key ? deferred.revision : revision,
-    current: previewSource === source && (deferred.key !== view.key || deferred.revision === revision),
+    documentKey: String(view.key), revision,
+    current: true,
     writable: writable && !focused,
     shortcuts: shortcuts.overrides,
     onEdit: request => {
-      if (!writable || !previewRangeCurrent(request)) return false;
+      if (!writable || !previewRangeCurrent(request)) return null;
       const applied = surface.current?.applyPatch({
         start: request.from, end: request.to, expected: request.expected, insert: request.insert, selection: request.selection,
-      }) ?? false;
-      if (applied && request.revealSource) {
+      }, undefined, request.typing) ?? false;
+      if (!applied) return null;
+      if (request.revealSource) {
         setMode('split');
         requestAnimationFrame(() => surface.current?.focus());
       }
-      return applied;
+      return { source: session.currentSource(), revision: session.currentRevision() };
     },
     onOpenSource: request => {
       if (!previewRangeCurrent(request) || !session.canLeaveInput()) return false;

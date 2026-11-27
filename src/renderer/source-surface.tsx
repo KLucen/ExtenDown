@@ -1,5 +1,5 @@
 import { autocompletion, type CompletionContext } from '@codemirror/autocomplete';
-import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, Transaction } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, insertNewline, isolateHistory } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -21,7 +21,7 @@ export interface SourceSurfaceHandle {
   selection(): SourceSelection;
   select(selection: SourceSelection, reveal?: boolean): void;
   replaceText(value: string): boolean;
-  applyPatch(patch: SourcePatch, expectedSource?: string): boolean;
+  applyPatch(patch: SourcePatch, expectedSource?: string, typing?: boolean): boolean;
 }
 interface Props {
   readonly documentKey: string;
@@ -47,7 +47,7 @@ function editorSelection(start: number, end: number, direction: SourceSelection[
   return direction === 'backward' ? EditorSelection.single(end, start) : EditorSelection.single(start, end);
 }
 
-function applyPatch(view: EditorView, patch: SourcePatch, expectedSource?: string): boolean {
+function applyPatch(view: EditorView, patch: SourcePatch, expectedSource?: string, typing = false): boolean {
   const doc = view.state.doc;
   const { start, end, expected, selection } = patch;
   if (view.state.readOnly || view.compositionStarted || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
@@ -60,7 +60,7 @@ function applyPatch(view: EditorView, patch: SourcePatch, expectedSource?: strin
   view.dispatch({
     changes: insert === expected ? undefined : { from: start, to: end, insert },
     selection: selection && editorSelection(selection.start, selection.end, selection.direction),
-    annotations: isolateHistory.of('full'),
+    annotations: typing ? Transaction.userEvent.of('input.type') : isolateHistory.of('full'),
   });
   return true;
 }
@@ -165,7 +165,8 @@ export const SourceSurface = forwardRef<SourceSurfaceHandle, Props>(function Sou
       return applyPatch(view, { start: 0, end: view.state.doc.length, expected: view.state.doc.toString(), insert,
         selection: { start: Math.min(previous.start, insert.length), end: Math.min(previous.end, insert.length), direction: previous.direction } });
     },
-    applyPatch: (patch, expectedSource) => !!editor.current && !compositionActive.current && applyPatch(editor.current, patch, expectedSource),
+    applyPatch: (patch, expectedSource, typing) =>
+      !!editor.current && !compositionActive.current && applyPatch(editor.current, patch, expectedSource, typing),
     select: (next, reveal) => {
       const view = editor.current;
       if (!view || compositionActive.current) return;

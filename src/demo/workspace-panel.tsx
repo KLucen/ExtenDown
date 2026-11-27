@@ -9,6 +9,7 @@ import './workspace-panel.css';
 interface Root { id: string; name: string; path: string }
 interface Entry { name: string; path: string; directory: boolean; document: boolean; linked: boolean }
 interface Listing { entries: Entry[]; limited: boolean }
+interface DocumentListing extends Listing { skipped: number }
 interface CurrentFile { relative: string; status: WorkspaceDiskStatus }
 interface SearchHit { path: string; line: number | null; preview: string | null }
 interface SearchResults { hits: SearchHit[]; limited: boolean; skipped: number }
@@ -37,7 +38,9 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
   const [current, setCurrent] = useState<CurrentFile | null>(null);
   const [activeFolder, setActiveFolder] = useState(ROOT_PATH);
   const [locate, setLocate] = useState<string | null>(null);
-  const [tab, setTab] = useState<'tree' | 'search' | 'links'>('tree');
+  const [tab, setTab] = useState<'documents' | 'tree' | 'search' | 'links'>('documents');
+  const [documents, setDocuments] = useState<DocumentListing | null>(null);
+  const [documentsError, setDocumentsError] = useState('');
   const [query, setQuery] = useState('');
   const [inContents, setInContents] = useState(false);
   const [results, setResults] = useState<SearchResults | null>(null);
@@ -56,6 +59,7 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
   const diskStatus = useRef(session.noteWorkspaceDiskStatus);
   const statusVersion = useRef(0);
   const searchVersion = useRef(0);
+  const documentsVersion = useRef(0);
   const handledLocation = useRef(session.workspaceLocation);
   jump.current = onJumpToPosition;
   diskStatus.current = session.noteWorkspaceDiskStatus;
@@ -113,6 +117,20 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
     }));
   }, []);
 
+  const loadDocuments = useCallback(async (selected: Root) => {
+    const version = ++documentsVersion.current;
+    try {
+      const listing = await invoke<DocumentListing>('workspace_documents', { workspaceId: selected.id });
+      if (version !== documentsVersion.current || rootRef.current?.id !== selected.id) return;
+      setDocuments(listing);
+      setDocumentsError('');
+    } catch (reason) {
+      if (version !== documentsVersion.current || rootRef.current?.id !== selected.id) return;
+      setDocuments(null);
+      setDocumentsError(errorMessage(reason, '无法读取工作区文档。'));
+    }
+  }, []);
+
   const documentId = session.view.documentId;
   const documentPath = session.view.path;
   const revision = session.view.revision;
@@ -166,6 +184,14 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
   }, [root, expanded, open, loadDirectories]);
 
   useEffect(() => {
+    if (!root || !open || tab !== 'documents') return;
+    const onFocus = () => void loadDocuments(root);
+    onFocus();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [root, open, tab, loadDocuments]);
+
+  useEffect(() => {
     if (!locate || !list.current) return;
     const element = Array.from(list.current.querySelectorAll<HTMLButtonElement>('button[data-relative]'))
       .find(button => button.dataset.relative === locate);
@@ -173,7 +199,7 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
     element.scrollIntoView({ block: 'nearest' });
     element.focus({ preventScroll: true });
     setLocate(null);
-  }, [folders, locate, tab, open]);
+  }, [folders, documents, locate, tab, open]);
 
   function activateRoot(selected: Root | null) {
     rootRef.current = selected;
@@ -181,13 +207,15 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
     setRoot(selected);
     setFolders({});
     setFolderErrors({});
+    setDocuments(null);
+    setDocumentsError('');
     setExpanded(ROOT_ONLY);
     setActiveFolder(ROOT_PATH);
     setResults(null);
     setIssues(null);
     setMenu(null);
     setLocate(null);
-    setTab('tree');
+    setTab('documents');
     setQuery('');
   }
 
@@ -289,6 +317,7 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
       const remaining = expanded.filter(path => path !== entry.path && !path.startsWith(entry.path + '/'));
       setExpanded(remaining);
       await loadDirectories(selected, remaining);
+      if (tab === 'documents') await loadDocuments(selected);
     }, '无法移到回收站。');
   }
 
@@ -314,7 +343,8 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
         await loadDirectories(root, [path]);
         openFile(created);
       }
-      setTab('tree');
+      if (tab === 'documents') await loadDocuments(root);
+      setTab(tab === 'documents' ? 'documents' : 'tree');
       setNameEdit(null);
     }, '无法保存工作区项目。');
   }
@@ -438,6 +468,7 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
         <button type="button" disabled={busy} onClick={() => void run(async () => {
           await loadDirectories(root, expanded);
           if (documentId) await updateCurrent(root, documentId);
+          if (tab === 'documents') await loadDocuments(root);
         }, '无法刷新工作区。')}>刷新</button>
         <button type="button" disabled={busy} onClick={closeRoot}>关闭文件夹</button>
       </>}
@@ -445,6 +476,7 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
     {rootLabel}
     {root && <>
       <div className="workspace-tabs" aria-label="工作区视图">
+        <button type="button" aria-pressed={tab === 'documents'} onClick={() => setTab('documents')}>全部文档</button>
         <button type="button" aria-pressed={tab === 'tree'} onClick={() => setTab('tree')}>文件树</button>
         <button type="button" aria-pressed={tab === 'search'} onClick={() => setTab('search')}>搜索</button>
         <button type="button" aria-pressed={tab === 'links'} onClick={() => setTab('links')}>链接检查</button>
@@ -457,6 +489,31 @@ export function WorkspacePanel({ open, onClose, session, onJumpToPosition }: Wor
         </div>
         <div className="workspace-list" ref={list}>{renderDirectory(ROOT_PATH, 0)}</div>
       </>}
+      {tab === 'documents' && (
+        <div className="workspace-list workspace-results" ref={list}>
+          {documentsError && <p className="workspace-empty error" role="alert">{documentsError}</p>}
+          {!documentsError && <p className="workspace-empty" role="status">
+            {documents ? `${documents.entries.length} 个文档` : '正在读取…'}
+            {documents?.limited && ' · 已达扫描上限'}
+            {Boolean(documents?.skipped) && ' · 无法读取 ' + documents?.skipped + ' 个文件夹'}
+          </p>}
+          {documents?.entries.map(entry => <div className="workspace-file-row" data-active={current?.relative === entry.path}
+            key={entry.path} onContextMenu={event => contextMenu(event, entry)}>
+            <button type="button" className="workspace-file-name" data-relative={entry.path} title={entry.path}
+              aria-current={current?.relative === entry.path ? 'page' : undefined}
+              disabled={session.pending} onClick={() => openFile(entry.path)}
+              onKeyDown={event => keyMenu(event, entry)}>
+              <span className="workspace-file-icon" aria-hidden="true">·</span><span>{entry.path}</span>
+              {entry.linked && <span aria-label="链接">↗</span>}
+            </button>
+            <button type="button" className="workspace-row-menu" aria-label={'操作 ' + entry.name}
+              onClick={event => {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                showMenu(entry, event.currentTarget, bounds.left, bounds.bottom);
+              }}>⋯</button>
+          </div>)}
+        </div>
+      )}
       {tab === 'search' && <>
         <form className="workspace-search" onSubmit={submitSearch}>
           <label><span>搜索范围</span><select value={inContents ? 'text' : 'name'} onChange={event => {

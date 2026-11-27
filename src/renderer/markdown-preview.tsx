@@ -3,6 +3,7 @@ import type { ComponentProps, ReactNode } from 'react';
 import type { Components, ExtraProps } from 'react-markdown';
 import type { Element, Root } from 'hast';
 import { buildPreviewProjection, resolvePreviewFragment } from '../core/preview-projection.ts';
+import { parseMarkdownSnapshot } from '../core/markdown-snapshot.ts';
 import { hasMermaidExtension, MAX_MERMAID_DIAGRAMS, mermaidSource } from '../core/plugins/mermaid.ts';
 import { hasMathExtension, READING_EXTENSION_CSS, type ReadingOptions } from '../core/plugins/reading-extensions.ts';
 import {
@@ -17,6 +18,7 @@ import { ReaderEditableBlock, readerCaretOffset } from './reader-editable-block'
 import { ReaderMarkdown } from './reader-markdown';
 import { PreviewTableEditor } from './preview-table-editor';
 import { PreviewCodeBlock } from './preview-code-block';
+import { buildPreviewLayout } from './preview-layout';
 import { SourceSelectionToolbar } from './source-command-menu';
 import './preview-edit.css';
 
@@ -40,14 +42,20 @@ export type PreviewSourceRange = PreviewVersion & PreviewSourceSpan;
 interface PreviewPatch extends PreviewSourcePatch {
   readonly selection?: EditorSelection;
   readonly revealSource?: boolean;
+  readonly typing?: boolean;
 }
 export type PreviewRangeEdit = PreviewVersion & PreviewPatch;
 type PreviewActivity = 'composing' | 'committing' | 'draft';
 
+interface PreviewSnapshot {
+  readonly source: string;
+  readonly revision: number;
+}
+
 export interface PreviewEditing extends PreviewVersion {
   readonly writable: boolean;
   readonly current: boolean;
-  readonly onEdit: (request: PreviewRangeEdit) => boolean;
+  readonly onEdit: (request: PreviewRangeEdit) => PreviewSnapshot | null;
   readonly onOpenSource: (range: PreviewSourceRange) => boolean;
   readonly shortcuts?: ShortcutOverrides;
   readonly onActivityChange: (kind: PreviewActivity, active: boolean) => void;
@@ -58,6 +66,7 @@ interface ActiveText extends PreviewVersion {
   readonly initialCaret?: number;
   readonly source: string;
   readonly reading: ReadingOptions;
+  accepted: PreviewSnapshot & { text: string };
 }
 
 interface ActiveCell extends PreviewVersion {
@@ -65,6 +74,7 @@ interface ActiveCell extends PreviewVersion {
   readonly source: string;
   readonly reading: ReadingOptions;
   readonly initialCaret?: number;
+  accepted: PreviewSnapshot & { cell: EditablePreviewCell };
 }
 
 interface PreviewCellPress {
@@ -103,8 +113,8 @@ interface PreviewEditControls {
   readonly shortcuts?: ShortcutOverrides;
   readonly startText: (offset: number) => void;
   readonly finishText: (offset: number) => void;
-  readonly commitText: (offset: number, previous: string, next: string, inline?: PreviewInlineText) => Promise<boolean>;
-  readonly splitText: (offset: number, previous: string, next: string, selection: EditorSelection, inline?: PreviewInlineText) => boolean;
+  readonly commitText: (offset: number, next: string, inline?: PreviewInlineText, live?: boolean) => boolean;
+  readonly splitText: (offset: number, next: string, selection: EditorSelection, inline?: PreviewInlineText) => boolean;
   readonly setDraft: (dirty: boolean) => void;
   readonly setActivity: (kind: PreviewActivity, active: boolean) => void;
   readonly report: (offset: number, reason: string, draft?: string) => void;
@@ -121,7 +131,7 @@ interface PreviewCellControls {
   readonly ready: boolean;
   readonly start: (cell: EditablePreviewCell) => void;
   readonly finish: (id: string) => void;
-  readonly commit: (cell: EditablePreviewCell, text: string, inline?: PreviewInlineText) => Promise<boolean>;
+  readonly commit: (cell: EditablePreviewCell, text: string, inline?: PreviewInlineText, live?: boolean) => boolean;
   readonly setDraft: (dirty: boolean) => void;
   readonly setActivity: (kind: PreviewActivity, active: boolean) => void;
   readonly report: (offset: number, reason: string, draft?: string) => void;
@@ -140,7 +150,7 @@ function PreviewCell({ children }: { readonly children: ReactNode }) {
     documentKey={controls.documentKey} enabled={active} tabIndex={controls.ready || active ? 0 : undefined}
     initialCaret={active ? controls.active?.initialCaret : undefined}
     className="preview-cell-editor" onStart={controls.ready || active ? () => controls.start(cell) : undefined}
-    onCommit={(_offset, _previous, text, inline) => controls.commit(cell, text, inline)} onDraftChange={controls.setDraft}
+    onCommit={(text, inline, live) => controls.commit(cell, text, inline, live)} onDraftChange={controls.setDraft}
     onActivityChange={controls.setActivity} onRestricted={controls.report} onFinish={() => controls.finish(cell.id)}>
       {children}
     </ReaderEditableBlock>
@@ -187,8 +197,11 @@ function PreviewText({ as, offset, text, splittable = false, children, ...props 
     const current = controls.activeText;
     const selected = activePreviewSelection(offset);
     if (!current || !selected || !controls.canFormat()) return;
-    const patch = buildPreviewFormatPatch(current.source, offset, text, selected.text, selected.selection, command, controls.math);
-    if (patch && controls.apply({ ...patch, revealSource: command === 'format.link' }, current)) {
+    const patch = buildPreviewFormatPatch(current.accepted.source, offset, current.accepted.text,
+      selected.text, selected.selection, command, controls.math);
+    if (patch && controls.apply({ ...patch, revealSource: command === 'format.link' }, {
+      documentKey: current.documentKey, revision: current.accepted.revision,
+    })) {
       controls.setDraft(false);
       controls.finishText(offset);
       if (command !== 'format.link') controls.focusBlock(offset);
@@ -198,9 +211,10 @@ function PreviewText({ as, offset, text, splittable = false, children, ...props 
   };
   return <><ReaderEditableBlock as={as} blockStart={offset} documentKey={controls.documentKey}
     enabled={active} initialCaret={active ? controls.activeText?.initialCaret : undefined}
-    sourceText={text} id={props.id} className={props.className} tabIndex={0}
-    onCommit={controls.commitText} onDraftChange={controls.setDraft} onActivityChange={controls.setActivity}
-    onSplit={splittable ? (next, selection, inline) => controls.splitText(offset, text, next, selection, inline) : undefined}
+    sourceText={text} allowMultiline={splittable} id={props.id} className={props.className} tabIndex={0}
+    onCommit={(next, inline, live) => controls.commitText(offset, next, inline, live)}
+    onDraftChange={controls.setDraft} onActivityChange={controls.setActivity}
+    onSplit={splittable ? (next, selection, inline) => controls.splitText(offset, next, selection, inline) : undefined}
     onRestricted={controls.report} onFinish={() => controls.finishText(offset)}
     onCancel={() => controls.focusBlock(offset)}
     onStart={controls.ready || active ? () => controls.startText(offset) : undefined}
@@ -399,24 +413,38 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
     }
     setFeedback({ reason, draft });
   }, []);
-  const apply = (patch: PreviewPatch, version: PreviewVersion) => {
-    const editedSource = activeEdit?.source ?? source;
-    if (!authority.current?.onEdit({ ...patch, documentKey: version.documentKey, revision: version.revision })) return false;
+  const applyPatch = (patch: PreviewPatch, version: PreviewVersion, editedSource: string) => {
+    const updated = authority.current?.onEdit({ ...patch, documentKey: version.documentKey, revision: version.revision });
+    if (!updated) return null;
     const press = textPress.current;
     if (press?.documentKey === version.documentKey && press.source === editedSource) {
       if (press.offset + Number(editedSource.startsWith('\uFEFF')) >= patch.to) {
-        press.offset += patch.insert.length - (patch.to - patch.from);
+        press.offset += updated.source.length - editedSource.length;
       }
-      press.source = editedSource.slice(0, patch.from) + patch.insert + editedSource.slice(patch.to);
+      press.source = updated.source;
     }
-    remapCellPress(patch, version, editedSource);
-    return true;
+    const pendingCell = cellPress.current;
+    if (pendingCell?.documentKey === version.documentKey && pendingCell.source === editedSource) {
+      if (pendingCell.rowStart + Number(editedSource.startsWith('\uFEFF')) >= patch.to) {
+        pendingCell.rowStart += updated.source.length - editedSource.length;
+      }
+      pendingCell.source = updated.source;
+    }
+    return updated;
+  };
+  const apply = (patch: PreviewPatch, version: PreviewVersion) =>
+    Boolean(applyPatch(patch, version, activeEdit?.accepted.source ?? source));
+  const offsetShift = (offset: number) => {
+    const activeOffset = activeText?.offset ?? activeCell?.cell.rowStart;
+    if (!activeEdit || activeOffset === undefined || offset <= activeOffset) return 0;
+    return activeEdit.accepted.source.length - activeEdit.source.length;
   };
   const ready = Boolean(editing?.writable && editing.current && !activeText && !activeTable && !activeCell);
   const startCell = (cell: EditablePreviewCell, initialCaret?: number) => {
     if (!editing || !ready) return;
     setFeedback(undefined);
     setActiveCell({ cell, initialCaret, source, documentKey: editing.documentKey, revision: editing.revision,
+      accepted: { source, revision: editing.revision, cell },
       reading: { extensions, highlightCode } });
   };
   const startPressedCell = () => {
@@ -428,31 +456,18 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
       startCell(cell, press.caret);
     }
   };
-  const remapCellPress = (patch: PreviewPatch, version: PreviewVersion, editedSource: string) => {
-    const press = cellPress.current;
-    if (!press || press.documentKey !== version.documentKey || press.source !== editedSource) return;
-    const bomOffset = Number(editedSource.startsWith('\uFEFF'));
-    if (press.rowStart + bomOffset >= patch.to) press.rowStart += patch.insert.length - (patch.to - patch.from);
-    press.source = editedSource.slice(0, patch.from) + patch.insert + editedSource.slice(patch.to);
-  };
   useLayoutEffect(startPressedCell);
   const startText = (offset: number, initialCaret?: number) => {
     if (!editing || !ready) return;
     setFeedback(undefined);
     setActiveText({ offset, initialCaret, source, documentKey: editing.documentKey, revision: editing.revision,
+      accepted: { source, revision: editing.revision, text: edits?.text.get(offset) ?? '' },
       reading: { extensions, highlightCode } });
   };
   const blankOffset = emptyParagraph?.source === activeSource && emptyParagraph?.documentKey === editing?.documentKey
     ? emptyParagraph?.offset : projection.snapshot.body.length === 0 ? 0 : undefined;
-  const previewTree = useMemo((): Root => {
-    if (!editable || blankOffset === undefined) return projection.renderTree;
-    const children = [...projection.renderTree.children];
-    const mark = children.findIndex(child => (child.position?.start.offset ?? -1) >= blankOffset);
-    children.splice(mark < 0 ? children.length : mark, 0, {
-      type: 'element', tagName: 'p', properties: { dataEmptyDraft: blankOffset }, children: [],
-    });
-    return { ...projection.renderTree, children };
-  }, [blankOffset, editable, projection.renderTree]);
+  const previewTree = useMemo(() => buildPreviewLayout(projection.renderTree, projection.snapshot.body,
+    editable ? blankOffset : undefined), [blankOffset, editable, projection.renderTree, projection.snapshot.body]);
   useLayoutEffect(() => {
     const target = splitTarget.current;
     if (!target || !ready || !editing) return;
@@ -463,7 +478,8 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
     const press = textPress.current;
     if (!ready || !press?.released) return;
     textPress.current = null;
-    if (press.documentKey === editing?.documentKey && press.source === source && edits?.text.get(press.offset) === press.text) {
+    if (press.documentKey === editing?.documentKey && press.source === source &&
+      (edits?.text.get(press.offset) ?? (press.offset === blankOffset ? '' : undefined)) === press.text) {
       startText(press.offset, press.caret);
     }
   };
@@ -473,20 +489,34 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
     canFormat: () => !activity.current.has('composing') && !activity.current.has('committing'),
     focusBlock: offset => { restoreFocus.current = offset; },
     startText,
-    finishText: offset => setActiveText(edit => edit?.offset === offset ? null : edit),
-    commitText: async (offset, previous, next, inline) => {
-      if (activeText?.offset !== offset) return false;
-      const patch = buildPreviewTextPatch(activeText.source, offset, previous, next, math, blankOffset === offset, inline);
-      return patch !== null && apply(patch, activeText);
+    finishText: offset => {
+      if (activeText?.offset !== offset) return;
+      if (edits?.paragraphs.has(offset) && activeText.accepted.text === '') {
+        setEmptyParagraph({ offset, source: activeText.accepted.source, documentKey: activeText.documentKey });
+      }
+      setActiveText(null);
     },
-    splitText: (offset, previous, next, selection, inline) => {
+    commitText: (offset, next, inline, live) => {
       if (activeText?.offset !== offset) return false;
-      const patch = buildPreviewParagraphSplitPatch(activeText.source, offset, previous, next, selection, math, blankOffset === offset, inline);
-      if (!patch || !apply(patch, activeText)) return false;
-      const updated = activeText.source.slice(0, patch.from) + patch.insert + activeText.source.slice(patch.to);
-      const target = { documentKey: activeText.documentKey, source: updated, offset: patch.nextBlock };
+      const { accepted, documentKey } = activeText;
+      const empty = accepted.text === '' && (blankOffset === offset || edits?.paragraphs.has(offset));
+      const patch = buildPreviewTextPatch(accepted.source, offset, accepted.text, next, math, empty, inline);
+      const updated = patch && applyPatch({ ...patch, typing: live }, { documentKey, revision: accepted.revision }, accepted.source);
+      if (!updated) return false;
+      activeText.accepted = { ...updated, text: next };
+      return true;
+    },
+    splitText: (offset, next, selection, inline) => {
+      if (activeText?.offset !== offset) return false;
+      const { accepted, documentKey } = activeText;
+      const empty = accepted.text === '' && (blankOffset === offset || edits?.paragraphs.has(offset));
+      const patch = buildPreviewParagraphSplitPatch(accepted.source, offset, accepted.text, next, selection, math, empty, inline);
+      const updated = patch && applyPatch(patch, { documentKey, revision: accepted.revision }, accepted.source);
+      if (!updated) return false;
+      const target = { documentKey, source: updated.source, offset: patch.nextBlock };
       splitTarget.current = target;
       setEmptyParagraph(patch.empty ? target : undefined);
+      setDraft(false);
       setFeedback(undefined);
       setActiveText(null);
       return true;
@@ -509,10 +539,16 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
     ready,
     start: startCell,
     finish: id => setActiveCell(previous => previous?.cell.id === id ? undefined : previous),
-    commit: async (cell, text, inline) => {
+    commit: (cell, text, inline, live) => {
       if (activeCell?.cell.id !== cell.id) return false;
-      const patch = buildPreviewCellPatch(activeCell.source, cell, text, math, inline);
-      return patch !== null && apply(patch, activeCell);
+      const { accepted, documentKey } = activeCell;
+      const patch = buildPreviewCellPatch(accepted.source, accepted.cell, text, math, inline);
+      const updated = patch && applyPatch({ ...patch, typing: live }, { documentKey, revision: accepted.revision }, accepted.source);
+      if (!updated) return false;
+      const nextCell = collectPreviewTableCells(parseMarkdownSnapshot(updated.source, { math }))
+        .get(cell.rowStart)?.[cell.column];
+      if (nextCell) activeCell.accepted = { ...updated, cell: nextCell };
+      return Boolean(nextCell);
     },
     report, setActivity, setDraft,
   } : null;
@@ -633,7 +669,7 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
               const caret = range ? readerCaretOffset(editor, range.startContainer, range.startOffset) : undefined;
               cellPress.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY,
                 documentKey: activeEdit.documentKey, text: cell.text, column, caret: caret ?? cell.text.length,
-                rowStart, source: activeEdit.source, released: false };
+                rowStart: rowStart + offsetShift(rowStart), source: activeEdit.accepted.source, released: false };
             }
           }
         }
@@ -641,12 +677,12 @@ export function MarkdownPreview({ source, extensions, highlightCode = true, reso
         const block = event.target.closest<HTMLElement>('p[data-source-block-start]:not([data-reader-editable]), h1[data-source-block-start]:not([data-reader-editable]), h2[data-source-block-start]:not([data-reader-editable]), h3[data-source-block-start]:not([data-reader-editable]), h4[data-source-block-start]:not([data-reader-editable]), h5[data-source-block-start]:not([data-reader-editable]), h6[data-source-block-start]:not([data-reader-editable])');
         if (!block || !event.currentTarget.contains(block)) return;
         const offset = Number(block.dataset.sourceBlockStart);
-        const text = edits?.text.get(offset);
+        const text = edits?.text.get(offset) ?? (offset === blankOffset ? '' : undefined);
         const range = block.ownerDocument.caretRangeFromPoint?.(event.clientX, event.clientY);
         if (text === undefined) return;
         const caret = range ? readerCaretOffset(block, range.startContainer, range.startOffset) : undefined;
-        textPress.current = { documentKey: activeEdit.documentKey, source: activeEdit.source,
-          offset, text, caret: caret ?? text.length, pointerId: event.pointerId, x: event.clientX, y: event.clientY, released: false };
+        textPress.current = { documentKey: activeEdit.documentKey, source: activeEdit.accepted.source,
+          offset: offset + offsetShift(offset), text, caret: caret ?? text.length, pointerId: event.pointerId, x: event.clientX, y: event.clientY, released: false };
       }}
       onPointerUpCapture={event => {
         const pressedCell = cellPress.current;

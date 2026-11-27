@@ -5,10 +5,13 @@ interface ReaderEditScheduler {
 
 interface ReaderEditSessionOptions {
   readonly sourceText: string;
+  /** Preview paragraphs can contain Markdown soft line breaks. */
+  readonly allowMultiline?: boolean;
   readonly readText: () => string | null;
   readonly isFocused: () => boolean;
   readonly restoreChildren: () => void;
   readonly onCommit: (text: string) => Promise<boolean>;
+  readonly onSync?: (text: string) => boolean;
   readonly onDraftChange: (dirty: boolean) => void;
   readonly onCommittingChange: (active: boolean) => void;
   readonly onFinish?: () => void;
@@ -25,6 +28,7 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
   let pendingBlur = false;
   let generation = 0;
   let draft = options.sourceText;
+  let acceptedText = options.sourceText;
   let cancelScheduled: (() => void) | null = null;
   let releaseSettlingActivity: (() => void) | null = null;
 
@@ -54,7 +58,7 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
   const restoreChildren = () => {
     if (!alive) return;
     cancel();
-    draft = options.sourceText;
+    draft = acceptedText;
     options.restoreChildren();
   };
   const restore = () => {
@@ -65,15 +69,21 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
   const readDraft = () => {
     const text = options.readText();
     if (text === null) { cancel(); return false; }
-    if (/\r|\n/u.test(text)) {
+    if (!options.allowMultiline && /\r|\n/u.test(text)) {
       options.onRestricted('换行请在源码中继续，已保留未应用的输入。', text);
       restore();
       options.onFinish?.();
       return false;
     }
     draft = text;
-    options.onDraftChange(text !== options.sourceText);
+    options.onDraftChange(text !== acceptedText);
     return true;
+  };
+  const sync = () => {
+    if (draft !== acceptedText && options.onSync?.(draft)) {
+      acceptedText = draft;
+      options.onDraftChange(false);
+    }
   };
   const commit = () => {
     if (!alive || !editing) return;
@@ -89,7 +99,7 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
     const token = ++generation;
     const next = draft;
     options.onDraftChange(false);
-    if (next === options.sourceText) { release(); options.onFinish?.(); return; }
+    if (next === acceptedText) { release(); options.onFinish?.(); return; }
     const current = () => alive && token === generation && !composing && !options.isFocused();
     const rejected = (reason: string) => {
       if (!current()) return;
@@ -137,6 +147,7 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
         if (pendingBlur && !options.isFocused()) commit();
         else {
           pendingBlur = false;
+          sync();
           releaseSettlingActivity?.();
         }
       });
@@ -168,6 +179,7 @@ export function createReaderEditSession(options: ReaderEditSessionOptions) {
     input: () => {
       if (!alive || !readDraft()) return;
       if (settling) scheduleFinish();
+      else if (!composing) sync();
     },
     blur: () => {
       if (!alive || !editing) return;

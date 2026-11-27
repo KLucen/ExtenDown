@@ -9,9 +9,10 @@ interface ReaderEditableBlockProps {
   readonly as: 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'span';
   readonly blockStart: number;
   readonly sourceText: string;
+  readonly allowMultiline?: boolean;
   readonly enabled: boolean;
   readonly initialCaret?: number;
-  readonly onCommit: (blockStart: number, sourceText: string, text: string, inline?: PreviewInlineText) => Promise<boolean>;
+  readonly onCommit: (text: string, inline?: PreviewInlineText, live?: boolean) => boolean;
   readonly onDraftChange: (dirty: boolean) => void;
   readonly onActivityChange: (kind: 'composing' | 'committing', active: boolean) => void;
   readonly onRestricted: (blockStart: number, reason: string, draftText?: string) => void;
@@ -97,6 +98,7 @@ export function ReaderEditableBlock({
   as,
   blockStart,
   sourceText,
+  allowMultiline = false,
   enabled,
   initialCaret,
   onCommit,
@@ -154,13 +156,15 @@ export function ReaderEditableBlock({
     if (!enabled) return;
     const session = createReaderEditSession({
       sourceText,
+      allowMultiline,
       readText: () => elementRef.current?.isConnected ? elementRef.current.textContent ?? '' : null,
       isFocused: () => document.activeElement === elementRef.current,
       restoreChildren: () => {
         nativeMutationRef.current = false;
         setRestoreVersion(version => version + 1);
       },
-      onCommit: text => callbacks.current.onCommit(blockStart, sourceText, text, previewInlineText(elementRef.current)),
+      onCommit: async text => callbacks.current.onCommit(text, previewInlineText(elementRef.current)),
+      onSync: text => callbacks.current.onCommit(text, previewInlineText(elementRef.current), true),
       onDraftChange: dirty => callbacks.current.onDraftChange(dirty),
       onRestricted: (reason, text) => callbacks.current.onRestricted(blockStart, reason, text),
       onFinish: () => callbacks.current.onFinish?.(),
@@ -193,7 +197,7 @@ export function ReaderEditableBlock({
       session.dispose();
       if (sessionRef.current === session) sessionRef.current = null;
     };
-  }, [documentKey, as, blockStart, sourceText, enabled, initialCaret, id, onActivityChange, Boolean(onStart)]);
+  }, [documentKey, as, blockStart, sourceText, allowMultiline, enabled, initialCaret, id, onActivityChange, Boolean(onStart)]);
 
   const handlePaste = (event: ClipboardEvent<HTMLElement>) => {
     event.preventDefault();
@@ -215,9 +219,7 @@ export function ReaderEditableBlock({
     const start = readerCaretOffset(element, range.startContainer, range.startOffset);
     const end = readerCaretOffset(element, range.endContainer, range.endOffset);
     if (start === undefined || end === undefined) return;
-    if (onSplit(element.textContent ?? '', { start, end, direction: range.collapsed ? 'none' : 'forward' }, previewInlineText(element))) {
-      sessionRef.current?.restore();
-    } else {
+    if (!onSplit(element.textContent ?? '', { start, end, direction: range.collapsed ? 'none' : 'forward' }, previewInlineText(element))) {
       onRestricted(blockStart, '当前段落无法安全拆分，请在源码中换行。');
     }
   };
@@ -260,8 +262,8 @@ export function ReaderEditableBlock({
     suppressContentEditableWarning: true,
     'data-reader-editable': enabled ? 'true' : undefined,
     'data-source-block-start': blockStart,
-    'aria-description': enabled ? (onSplit ? '按 Enter 拆分段落，按 Ctrl+Enter 应用修改，按 Escape 取消'
-      : '按 Enter 应用修改，按 Escape 取消') : onStart ? '点击文字或按 Enter 开始编辑' : undefined,
+    'aria-description': enabled ? (onSplit ? '输入实时同步，按 Enter 拆分段落，按 Escape 退出编辑'
+      : '输入实时同步，按 Enter 或 Escape 退出编辑') : onStart ? '点击文字或按 Enter 开始编辑' : undefined,
     onClick: !enabled && onStart ? (event: React.MouseEvent<HTMLElement>) => {
       // A drag selection remains a normal reading selection. A single click
       // with a collapsed caret enters editing at the point the user clicked.

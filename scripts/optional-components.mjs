@@ -3,10 +3,41 @@ import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { OFFICIAL_COMPONENTS } from '../src/core/plugins/component-catalog.ts';
+import { COMPONENT_CATEGORIES, OFFICIAL_COMPONENTS } from '../src/core/plugins/component-catalog.ts';
 
-const output = fileURLToPath(new URL('../src-tauri/target/optional-components/available/', import.meta.url));
+const output = fileURLToPath(new URL('../src-tauri/target/optional-components/', import.meta.url));
+const available = resolve(output, 'available');
 const groups = Object.fromEntries(OFFICIAL_COMPONENTS.map(item => [item.id, item.entries]));
+
+function nsisCatalog() {
+  const lines = [];
+  const macro = (name, commands) => lines.push(`!macro EXTENDOWN_COMPONENT_${name}`,
+    ...commands.map(command => '  ' + command), '!macroend', '');
+  macro('DECLARE', OFFICIAL_COMPONENTS.flatMap(item => ['Var pick_' + item.id, 'Var check_' + item.id]));
+
+  const positions = new Map([
+    ['writing', { left: 0, row: 24 }],
+    ['view', { left: 0, row: 24 + 12 + 3 * 13 + 8 }],
+    ['export', { left: 50, row: 24 }],
+    ['appearance', { left: 50, row: 24 + 12 + 3 * 13 + 8 }],
+  ]);
+  const checks = [];
+  for (const [category, label] of Object.entries(COMPONENT_CATEGORIES)) {
+    const position = positions.get(category);
+    if (!position) continue;
+    const items = OFFICIAL_COMPONENTS.filter(item => item.category === category);
+    if (!items.length) continue;
+    checks.push(`ExtendownCategory "${label}" ${position.left}% ${position.row}u`);
+    items.forEach((item, index) => {
+      const row = position.row + 12 + index * 13;
+      checks.push(`ExtendownCheckbox ${item.id} "${item.name}" ${position.left + 2}% ${row}u`);
+    });
+  }
+  macro('CHECKS', checks.map(command => `!insertmacro ${command}`));
+  macro('LOAD', OFFICIAL_COMPONENTS.map(item => `!insertmacro ExtendownLoadInitialChoice ${item.id}`));
+  macro('READ', OFFICIAL_COMPONENTS.map(item => `!insertmacro ExtendownReadChoice ${item.id}`));
+  return lines.join('\n');
+}
 
 function reachable(bundle, starts, blocker = () => false) {
   const visited = new Set();
@@ -77,16 +108,20 @@ export function optionalComponents() {
         }
       }
       clearGeneratedFiles(output);
+      clearGeneratedFiles(resolve(output, 'assets'));
+      mkdirSync(available, { recursive: true });
+      clearGeneratedFiles(available);
       const assets = {};
       for (const [file, components] of [...owners.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const item = bundle[file];
         const contents = item.type === 'chunk' ? item.code : item.source;
         assets[file] = { sha256: createHash('sha256').update(contents).digest('hex'), components };
-        writeFileSync(resolve(output, file.slice('assets/'.length) + '.gz'), gzipSync(contents, { level: 9 }));
+        writeFileSync(resolve(available, file.slice('assets/'.length) + '.gz'), gzipSync(contents, { level: 9 }));
         delete bundle[file];
       }
       this.emitFile({ type: 'asset', fileName: 'optional-assets.json',
         source: JSON.stringify({ groups: Object.keys(groups), assets }) });
+      writeFileSync(resolve(output, 'component-catalog.nsh'), nsisCatalog());
       this.info('Prepared ' + owners.size + ' downloadable assets for the ExtendownPlugin release.');
       },
     },

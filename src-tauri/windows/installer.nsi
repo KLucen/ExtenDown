@@ -246,6 +246,10 @@ Function PageReinstall
 
   nsis_tauri_utils::SemverCompare "${VERSION}" $R0
   Pop $R0
+  StrCpy $UpgradeMode 0
+  ${If} $R0 = 1
+    StrCpy $UpgradeMode 1
+  ${EndIf}
 
   ; Read the install choice header through $R5 so a custom language file that only
   ; defines the misspelled `choowHowToInstall` still shows its own text
@@ -423,7 +427,10 @@ FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
 
-; 6. Start menu shortcut page
+; 6. Optional components page, only for a first interactive install.
+Page custom ExtendownComponentsPage ExtendownComponentsLeave "可选组件"
+
+; 7. Start menu shortcut page
 Var AppStartMenuFolder
 !if "${STARTMENUFOLDER}" != ""
   !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
@@ -433,10 +440,10 @@ Var AppStartMenuFolder
 !endif
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
-; 7. Installation page
+; 8. Installation page
 !insertmacro MUI_PAGE_INSTFILES
 
-; 8. Finish page
+; 9. Finish page
 ;
 ; Don't auto jump to finish page after installation page,
 ; because the installation page has useful info that can be used debug any issues with the installer.

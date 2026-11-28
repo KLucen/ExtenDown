@@ -1,0 +1,62 @@
+name: Release Windows installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.90.0'
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install NSIS
+        run: choco install nsis --yes --no-progress
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run tauri -- build --config src-tauri/tauri.windows.conf.json --bundles nsis
+
+      - name: Publish installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME
+          if ($version -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Unexpected release tag $version"
+          }
+
+          $installers = @(Get-ChildItem 'src-tauri/target/release/bundle/nsis/*-x64-setup.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected one x64 NSIS installer, found $($installers.Count)"
+          }
+
+          $repository = $env:GITHUB_REPOSITORY
+          gh release view $version --repo $repository 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $version $installers[0].FullName --clobber --repo $repository
+          } else {
+            gh release create $version $installers[0].FullName --verify-tag --title "ExtenDown $version" --notes 'Windows x64 installer for ExtenDown.' --repo $repository
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to publish the Windows installer.'
+          }

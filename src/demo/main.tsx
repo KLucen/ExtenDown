@@ -242,7 +242,11 @@ function App() {
   for (const record of scriptPlugins.records) {
     if (!record.enabled) continue;
     for (const id of record.current.manifest.contributes) commands.push({
-      id: 'plugin:' + id, label: record.current.manifest.name + ' · ' + id, category: '插件', scope: 'app', source: record.current.manifest.name,
+      id: 'plugin:' + id,
+      label: record.current.manifest.commandLabels?.[id] ?? id,
+      category: '插件',
+      scope: 'app',
+      source: record.current.manifest.name,
       enabled: !pending, run: () => { if (session.canLeaveInput()) setScriptCommand(id); },
     });
   }
@@ -432,6 +436,7 @@ function App() {
         draftBusy={pending} draftError={session.error} onDiscardDraft={session.discard}
         onRestoreDraft={async id => { if (await session.restore(id)) setSettings(null); }}
         onClose={() => setSettings(null)} launchDefaults={() => invoke('set_default_markdown_app')} shortcuts={shortcuts} commands={commands}
+        onRunPluginCommand={id => setScriptCommand(id)}
         initialTab={settings.tab} pluginQuery={settings.query} />}
       {paletteOpen && <CommandPalette commands={commands} shortcuts={shortcuts} onClose={() => setPaletteOpen(false)} />}
       {scriptCommand !== null && <ScriptCommands records={scriptPlugins.records} initialCommand={scriptCommand || undefined}

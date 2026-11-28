@@ -25,6 +25,7 @@ fn main() {
             "installed_components",
             "install_official_component",
             "uninstall_official_component",
+            "consume_initial_component_selection",
             "list_repository_plugins",
             "download_repository_plugin",
             "choose_workspace",

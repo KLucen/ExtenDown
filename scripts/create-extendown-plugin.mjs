@@ -73,6 +73,7 @@ async function init(directory, id, name = id) {
     kind: 'command',
     entry: 'plugin.js',
     contributes: [command],
+    commandLabels: { [command]: '统计字符' },
     permissions: ['document.read'],
     dependencies: {},
   };

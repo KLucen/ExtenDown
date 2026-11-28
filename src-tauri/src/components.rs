@@ -18,6 +18,7 @@ const MAX_ASSET_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: usize = MAX_ASSET_BYTES as usize + 64 * 1024;
 const COMPONENTS_DIR: &str = "extendown-components";
 const SELECTIONS: &str = "selection.ini";
+const INITIAL_INSTALL_MARKER: &str = "download-selected=1";
 const RELEASE_PATH: &str = "/KLucen/ExtendownPlugin/releases/download/";
 const NETWORK_ERROR: &str = "无法从 GitHub 下载官方组件，请检查网络后重试。";
 const MISSING_ERROR: &str = "GitHub 暂无适用于当前版本的官方组件。";
@@ -260,6 +261,23 @@ impl ComponentStore {
             .map_err(|_| WRITE_ERROR)
     }
 
+    fn consume_initial_selection(&self) -> Result<Vec<String>, &'static str> {
+        let path = self.root.join(SELECTIONS);
+        let contents = crate::document::bounded_read(&path, 4096)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default();
+        if !contents.lines().any(|line| line == INITIAL_INSTALL_MARKER) {
+            return Ok(Vec::new());
+        }
+        let state = self.state.read().map_err(|_| WRITE_ERROR)?;
+        let selected = state.selected.difference(&state.installed).cloned().collect();
+        let persist = state.selected.clone();
+        drop(state);
+        self.save_selection(&persist)?;
+        Ok(selected)
+    }
+
     async fn download_missing(
         &self,
         group: &str,
@@ -444,6 +462,7 @@ pub async fn install_official_component(
     })
     .await
     .map_err(|_| WRITE_ERROR)?
+    .map_err(str::to_owned)
 }
 
 #[tauri::command]
@@ -465,6 +484,26 @@ pub async fn uninstall_official_component(
     })
     .await
     .map_err(|_| REMOVE_ERROR)?
+}
+
+#[tauri::command]
+pub async fn consume_initial_component_selection(
+    app: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    let store = app
+        .state::<InstalledComponents>()
+        .0
+        .clone()
+        .ok_or(UNMANAGED_ERROR)?;
+    let installation = Arc::clone(&store.installation).lock_owned().await;
+    let store_for_consume = Arc::clone(&store);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _installation = installation;
+        store_for_consume.consume_initial_selection()
+    })
+    .await
+    .map_err(|_| WRITE_ERROR)??;
+    Ok(store.snapshot().pending)
 }
 
 #[cfg(test)]
@@ -618,6 +657,22 @@ mod tests {
         assert!(snapshot.pending.is_empty());
         assert_eq!(snapshot.installed, ["images"]);
         assert!(root.path().join("assets/raster.js").exists());
+    }
+
+    #[test]
+    fn initial_installer_choices_are_consumed_once() {
+        let (root, store) = fixture();
+        fs::write(
+            root.path().join(SELECTIONS),
+            "[components]\r\npdf=1\r\nimages=0\r\n[installer]\r\ndownload-selected=1\r\n",
+        )
+        .unwrap();
+        let reopened = ComponentStore::new(store.inventory, root.path().to_owned());
+        assert_eq!(reopened.consume_initial_selection().unwrap(), ["pdf"]);
+        assert!(reopened.consume_initial_selection().unwrap().is_empty());
+        let persisted = fs::read_to_string(root.path().join(SELECTIONS)).unwrap();
+        assert!(persisted.contains("pdf=1"));
+        assert!(!persisted.contains("download-selected=1"));
     }
 
     #[test]

@@ -55,6 +55,24 @@ test('script package validation refuses privileged, ambiguous, or incompatible d
   }
 });
 
+test('command labels are optional and restricted to the plugin declared commands', () => {
+  const commandId = manifest.contributes[0];
+  const valid = validateScriptPlugin({
+    manifest: { ...manifest, commandLabels: { [commandId]: '整理空白' } },
+    source,
+  });
+  assert.equal(valid.manifest.commandLabels?.[commandId], '整理空白');
+  for (const commandLabels of [
+    { 'org.example.markdown-tools.unknown': '未知命令' },
+    { [commandId]: '双向覆盖\u202e' },
+    { [commandId]: 'a'.repeat(81) },
+  ]) {
+    assert.throws(() => validateScriptPlugin({
+      manifest: { ...manifest, commandLabels }, source,
+    }), PluginValidationError);
+  }
+});
+
 test('script package extraction enforces the root entry set and UTF-8 byte limits', () => {
   for (const entries of [
     { 'theme.json': new Uint8Array([0]) },

@@ -30,6 +30,15 @@ type Component = ComponentId;
 const FULL_COMPONENTS = new Set<Component>(COMPONENTS);
 const NO_COMPONENTS = new Set<Component>();
 const OFFICIAL_THEME_ID = 'org.extendown.theme.midnight';
+let initialComponentSelection: Promise<Component[]> | undefined;
+
+function consumeInitialComponentSelection() {
+  initialComponentSelection ??= invoke<Component[]>('consume_initial_component_selection').catch(reason => {
+    initialComponentSelection = undefined;
+    throw reason;
+  });
+  return initialComponentSelection;
+}
 interface OfficialComponentSnapshot {
   readonly revision: number;
   readonly installed: string[];
@@ -115,6 +124,7 @@ export function useExtensions() {
   const [componentSnapshot, setComponentSnapshot] = useState<OfficialComponentSnapshot | null | undefined>(
     () => isTauri() ? undefined : null,
   );
+  const [automaticDownloads, setAutomaticDownloads] = useState<ReadonlySet<Component>>(NO_COMPONENTS);
   const [loaded, setLoaded] = useState<Partial<Record<LazyComponent, PluginModule>>>({});
   const [extensionError, setExtensionError] = useState('');
   const components = useMemo(() => componentSnapshot === null ? FULL_COMPONENTS : componentSnapshot
@@ -131,9 +141,28 @@ export function useExtensions() {
     const subscription = listen<OfficialComponentSnapshot>('official-components-changed', ({ payload }) => {
       if (active) acceptComponentSnapshot(payload);
     }).catch(() => undefined);
-    void subscription.then(() => invoke<OfficialComponentSnapshot | null>('installed_components')).then(result => {
-      if (active) acceptComponentSnapshot(result);
-    }, () => {
+    void subscription.then(async () => {
+      const result = await invoke<OfficialComponentSnapshot | null>('installed_components');
+      if (!active) return;
+      acceptComponentSnapshot(result);
+      if (!result) return;
+      const selected = await consumeInitialComponentSelection();
+      if (!active) return;
+      setAutomaticDownloads(new Set(selected));
+      for (const id of selected) {
+        try {
+          acceptComponentSnapshot(await invoke<OfficialComponentSnapshot>('install_official_component', { componentId: id }));
+        } catch {
+          if (active) setExtensionError('部分安装器所选扩展未能下载，可在插件设置中重试。');
+        } finally {
+          if (active) setAutomaticDownloads(previous => {
+            const next = new Set(previous);
+            next.delete(id);
+            return next;
+          });
+        }
+      }
+    }).catch(() => {
       if (active) setExtensionError('无法读取桌面版已安装组件。');
     });
     return () => {
@@ -228,7 +257,7 @@ export function useExtensions() {
 
   return {
     preferences, update, registry, themes, style, dark: selectedTheme?.id === DARK_THEME.id || selectedTheme?.id === 'org.extendown.theme.midnight',
-    markdown, formats, focusAvailable, components, pendingComponents, extensionError,
+    markdown, formats, focusAvailable, components, pendingComponents, automaticDownloads, extensionError,
     componentsReady: componentSnapshot !== undefined, canManageComponents: componentSnapshot != null,
     install, changeComponent,
   };
@@ -276,7 +305,10 @@ function Components({ plugins, filter, operation, onChange }: {
       const enabled = officialEnabled(plugins.preferences, item.id, format ?? (item.id === 'html' || item.id === 'pdf' ? item.id : undefined));
       const state: ExtensionState = !plugins.componentsReady ? 'loading' : !installed ? 'missing' : enabled ? 'enabled' : 'disabled';
       const label = format ? format.toUpperCase() + ' 导出' : item.name;
-      return { ...item, format, label, installed, enabled, state, pending: plugins.pendingComponents.has(item.id) };
+      const pending = plugins.pendingComponents.has(item.id);
+      const status = pending ? '需重新下载' : installed ? (enabled ? '已安装 · 已启用' : '已安装 · 已停用') : '未安装';
+      const downloading = plugins.automaticDownloads.has(item.id);
+      return { ...item, format, label, installed, enabled, state, pending, status, downloading };
     });
   }).filter(item => (filter.category === 'all' || item.category === filter.category) &&
     (filter.state === 'all' || filter.state === item.state) &&
@@ -293,17 +325,17 @@ function Components({ plugins, filter, operation, onChange }: {
               const enabled = event.target.checked;
               plugins.update(state => toggleOfficial(state, item.id, enabled, item.format));
             }} />}
-            <span><strong>{item.label}</strong> <small>{item.pending ? '待重新下载' : EXTENSION_STATE_LABELS[item.state]}</small><small>{item.description}</small></span>
+            <span><strong>{item.label}</strong> <small>{item.status}</small><small>{item.description}</small></span>
           </label>
           {plugins.canManageComponents && <div className="component-actions">
-            {item.state === 'missing' && <button type="button" className="setting-action" disabled={operation !== null}
+            {!item.installed && <button type="button" className="setting-action" disabled={operation !== null || item.downloading}
               aria-label={'下载并安装 ' + item.label} onClick={() => onChange(item.id, 'install')}>
-              {operation?.id === item.id && operation.action === 'install' ? '正在下载…' : '下载并安装'}
+              {item.downloading || operation?.id === item.id && operation.action === 'install' ? '正在下载…' : '下载并安装'}
             </button>}
-            {(item.installed || item.pending) && item.format !== 'jpg' &&
+            {item.installed && item.format !== 'jpg' &&
               <button type="button" className="setting-action" disabled={operation !== null}
-                aria-label={item.pending ? '取消恢复 ' + item.name : '卸载 ' + item.name} onClick={() => onChange(item.id, 'uninstall')}>
-                {operation?.id === item.id && operation.action === 'uninstall' ? '正在卸载…' : item.pending ? '取消恢复' : '卸载'}
+                aria-label={'卸载 ' + item.name} onClick={() => onChange(item.id, 'uninstall')}>
+                {operation?.id === item.id && operation.action === 'uninstall' ? '正在卸载…' : '卸载'}
               </button>}
           </div>}
         </div>)}
@@ -319,7 +351,7 @@ const SETTINGS_TABS = {
 export type SettingsTab = keyof typeof SETTINGS_TABS;
 
 export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false, draftError, onRestoreDraft, onDiscardDraft,
-  onClose, launchDefaults, shortcuts, commands, initialTab = 'general', pluginQuery = '' }: {
+  onClose, launchDefaults, shortcuts, commands, onRunPluginCommand, initialTab = 'general', pluginQuery = '' }: {
   desktop: boolean;
   plugins: Extensions;
   scripts: ReturnType<typeof useScriptPlugins>;
@@ -332,6 +364,7 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
   launchDefaults: () => Promise<{ supported: boolean; requested: boolean; message: string }>;
   shortcuts: ReturnType<typeof useShortcuts>;
   commands: readonly EditorCommand[];
+  onRunPluginCommand: (id: string) => void;
   initialTab?: SettingsTab;
   pluginQuery?: string;
 }) {
@@ -353,14 +386,13 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
   async function changeOfficial(id: Component, action: OfficialAction) {
     if (componentOperation) return;
     const name = OFFICIAL_COMPONENTS.find(component => component.id === id)?.name ?? id;
-    const pending = plugins.pendingComponents.has(id);
     if (action === 'uninstall' && !await confirmation.confirm({
-      title: pending ? '取消恢复组件' : '卸载组件',
-      description: pending ? `取消恢复「${name}」。之后仍可从插件页下载安装。` : `卸载「${name}」。之后可从插件页重新安装。`,
-      confirmLabel: pending ? '取消恢复' : '卸载',
+      title: '卸载组件',
+      description: `卸载「${name}」。之后可从插件页重新安装。`,
+      confirmLabel: '卸载',
       variant: 'danger',
     })) return;
-    const label = action === 'install' ? '安装' : pending ? '取消恢复' : '卸载';
+    const label = action === 'install' ? '安装' : '卸载';
     setComponentFeedback(undefined);
     setComponentOperation({ id, action });
     try {
@@ -472,7 +504,7 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
     try {
       if (action === 'toggle') {
         await setScriptPluginEnabled(id, version, !record.enabled, record.generation);
-        setStatus(record.enabled ? `已停用 ${name}。` : `已启用 ${name}。可从顶栏「命令」运行。`);
+        setStatus(record.enabled ? `已停用 ${name}。` : `已启用 ${name}。可在下方点击命令名称运行。`);
       } else if (action === 'rollback' && record.previous) {
         await rollbackScriptPlugin(id, version, record.previous.manifest.version, record.generation);
         setStatus(`已回滚 ${name}。请在列表中启用该版本。`);
@@ -639,8 +671,18 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
         const permissions = permissionDescriptions(record.current);
         return <div className="script-plugin" key={id}>
           <strong>{name}</strong>
-          <small>{id} · v{version} · 本地文件 · {record.enabled ? '已启用' : '已停用'}</small>
+          <small>{id} · v{version} · 本地文件 · 已安装 · {record.enabled ? '已启用' : '已停用'}</small>
           <small>{permissions.length ? permissions.join('、') : '无文档权限'}</small>
+          <small>点击命令可直接运行。文档变更会先列出建议供你审阅。</small>
+          <div className="plugin-command-actions" aria-label={name + ' 命令'}>
+            {record.current.manifest.contributes.map(commandId => {
+              const label = record.current.manifest.commandLabels?.[commandId] ?? commandId;
+              return <button key={commandId} type="button" className="setting-action"
+                disabled={!record.enabled || packageBusy} onClick={() => onRunPluginCommand(commandId)}>
+                {label}
+              </button>;
+            })}
+          </div>
           <div className="dialog-actions">
             <button type="button" className="setting-action" disabled={packageBusy} onClick={() => void changeScript(record, 'toggle')}>
               {record.enabled ? '停用' : '启用'}

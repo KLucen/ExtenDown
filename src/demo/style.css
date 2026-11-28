@@ -149,6 +149,7 @@ dialog::backdrop { background: #14221c55; }
 .plugin-row > span, .plugin-row > label { overflow: hidden; text-overflow: ellipsis; }
 .script-plugin { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .script-plugin .setting-action { padding-block: 3px; }
+.plugin-command-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .script-command-select { display: grid; gap: 4px; min-width: 0; }
 .script-command-select select { width: 100%; min-width: 0; }
 .script-review-modal { width: min(calc(100% - 32px), 950px); }

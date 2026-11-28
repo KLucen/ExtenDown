@@ -14,6 +14,7 @@ export interface PluginManifest {
   readonly kind: PluginKind;
   readonly entry: string;
   readonly contributes: readonly string[];
+  readonly commandLabels?: Readonly<Record<string, string>>;
   readonly permissions: readonly PluginPermission[];
   readonly dependencies: Readonly<Record<string, string>>;
 }

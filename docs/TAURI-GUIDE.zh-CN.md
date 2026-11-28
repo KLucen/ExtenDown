@@ -61,7 +61,7 @@ Windows 的 NSIS 安装器通过 `src-tauri/windows/file-associations.nsh` 注�
 
 首次启动直接进入编辑器。预览及并排中可单击正文、标题或表格单元格开始编辑，键盘也可聚焦后按 Enter。普通文字输入实时同步到源码，输入法在候选确认后同步。预览保留段落内的软换行和顶层 Markdown 块之间的额外空行。在正文编辑中按 Enter 从光标处拆段，焦点落在新段落，粗体和斜体随文字一起回写。数学扩展支持 `$…$` 和 `$$` 公式，可离线渲染为 MathML。Mermaid 从 `mermaid` 围栏生成图像，关闭模块或排版失败时保留代码块。高亮支持 Bash、CSS、JavaScript、JSON、Python、Rust、SQL、TypeScript 与 XML/HTML。
 
-Windows 首次安装包含核心功能。「设置 → 插件」提供 HTML、PDF、PNG/JPG、数学公式、Mermaid、专注视图、额外代码语言和 Midnight 主题的下载、启停和卸载。PNG 和 JPG 共用一套安装资源，可在安装后分别启停。
+Windows 首次安装以核心功能为基础，并可在安装向导勾选额外官方组件。选中的组件将在首次启动时从 GitHub 下载。之后「设置 → 插件」提供 HTML、PDF、PNG/JPG、数学公式、Mermaid、专注视图、额外代码语言和 Midnight 主题的下载、启停和卸载。PNG 和 JPG 共用一套安装资源，可在安装后分别启停。
 
 ### 官方模块
 

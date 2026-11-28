@@ -36,6 +36,7 @@ node --experimental-strip-types scripts/create-extendown-plugin.mjs pack ../Exte
   "kind": "command",
   "entry": "plugin.js",
   "contributes": ["org.example.word-count.statistics"],
+  "commandLabels": { "org.example.word-count.statistics": "统计字符" },
   "permissions": ["document.read"],
   "dependencies": {}
 }
@@ -44,6 +45,7 @@ node --experimental-strip-types scripts/create-extendown-plugin.mjs pack ../Exte
 - 用自己的命名空间声明 `id`。每个贡献使用插件 ID 或以插件 ID 加一个点开头的命令 ID。`contributes` 可声明 1–20 个不重复的命令。
 - `version` 使用稳定版 `major.minor.patch`。`hostApi` 支持精确版本和 `^` 范围，当前宿主 API 版本为 `1.0.0`。
 - `permissions` 可为空。申请 `document.read` 后，运行时可收到当前窗口的文档文本与修订号。提议替换 Markdown 源码需要同时声明 `document.read` 与 `document.transform`。
+- 命令插件可用 `commandLabels` 为 `contributes` 中的命令设置简短、易识别的显示名称。旧插件不声明时仍会显示命令 ID。
 - 这个版本支持 `command` 贡献和空 `dependencies`。应用会拒绝声明文件、网络、窗口或导出权限的脚本包。
 
 ## 编写命令
@@ -70,9 +72,9 @@ function run(input) {
 
 ## 安装与版本管理
 
-1. 在「设置 → 插件」点击「安装插件文件」，选择 `.edplugin`。
+1. 在「设置 → 插件」的 GitHub 插件目录点击「下载并安装」，或点击「安装插件文件」选择本地 `.edplugin`。
 2. 在「第三方命令插件」中点击「启用」，核对该版本请求的权限并确认。
-3. 从顶栏「命令」选择命令并点击「运行」。返回 `source` 时，在「审阅文档变更」确认并点击「应用变更」。
+3. 启用后可在该插件下方直接点击命令显示名，或从顶栏「命令」搜索命令。返回 `source` 时，在「审阅文档变更」确认并点击「应用变更」。
 4. 更新时保留同一个 ID，提高 `version`，然后安装新版包。应用保留上一个版本，可在插件行选择「回滚」。更新和回滚后均需为该版本确认权限并重新启用。
 
 要从应用内的「GitHub 插件目录」分发插件，先将验证后的 `.edplugin` 发布到 ExtendownPlugin 的 Release，再将插件 ID、版本、类型、Release 标签、附件名和 SHA-256 加入该仓库的 `catalog.json`。[插件仓库](https://github.com/KLucen/ExtendownPlugin)

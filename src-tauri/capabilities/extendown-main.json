@@ -36,6 +36,7 @@
     "allow-installed-components",
     "allow-install-official-component",
     "allow-uninstall-official-component",
+    "allow-consume-initial-component-selection",
     "allow-list-repository-plugins",
     "allow-download-repository-plugin",
     "allow-choose-workspace",

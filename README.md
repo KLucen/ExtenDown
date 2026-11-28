@@ -14,8 +14,8 @@ ExtenDown 是基于 Tauri v2 的本地 Markdown 编辑器。左侧可折叠侧�
 - 预览支持 CommonMark、GFM 表格和任务列表、常见语言的围栏代码高亮、授权范围内的相对图片，以及可选的数学公式和 Mermaid 图表。
 - 在「预览」或「并排」中，可直接编辑段落、标题和表格单元格。正文输入实时同步到源码，输入法确认候选后同步。预览保留段落内换行和顶层块之间的额外空行，按 Enter 从光标处拆段并继续编辑。修改进入同一份 Markdown 草稿，可跨视图撤销。源码区提供选区工具条、查找替换及代码围栏语言建议。
 - 从顶栏「命令」搜索内置或已授权的插件操作。在「设置 → 快捷键」可更改绑定和恢复默认。
-- 「设置 → 插件」列出全部官方组件。点击「下载并安装」从 GitHub 获取当前应用版本的组件，装好后可以离线使用、启停或卸载。[ExtendownPlugin](https://github.com/KLucen/ExtendownPlugin)
-- 点击「GitHub 插件目录 → 查看插件」可下载主题和命令插件，也可用「安装插件文件」导入本地 `.edplugin`。主题在「常规 → 外观」切换，命令插件启用并确认权限后从顶栏「命令」运行。[命令插件开发指南](docs/PLUGIN-DEVELOPMENT.zh-CN.md)
+- 「设置 → 插件」列出全部官方组件。点击「下载并安装」从 GitHub 获取当前应用版本的组件，装好后可以离线使用、启停或卸载。Windows 首次安装器也可勾选想要的组件，应用首次启动时自动下载所选项。[ExtendownPlugin](https://github.com/KLucen/ExtendownPlugin)
+- 点击「GitHub 插件目录 → 查看插件」可下载主题和命令插件，也可用「安装插件文件」导入本地 `.edplugin`。主题在「常规 → 外观」切换。命令插件启用后可在插件设置中直接运行其命令，也可从顶栏「命令」搜索运行；变更会先显示审阅结果。[命令插件开发指南](docs/PLUGIN-DEVELOPMENT.zh-CN.md)
 - 从顶栏「导出」选择 HTML、PDF、PNG 或 JPG，在同一个弹窗调整格式选项并查看内容预览。HTML 可离线打开，PDF 以图像分页，PNG 和 JPG 可输出单张图或分段图片 ZIP。
 
 Windows 的 NSIS 安装器默认将核心编辑器安装到 `%LOCALAPPDATA%\extendown\app`，可在向导中修改路径。安装器将 ExtenDown 注册为 `.md` 和 `.markdown` 的候选应用，安装后可从「设置 → 常规 → 选择 .md 默认应用」打开 Windows 系统设置。

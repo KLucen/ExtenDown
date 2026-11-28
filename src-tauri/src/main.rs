@@ -616,6 +616,7 @@ fn main() {
             components::installed_components,
             components::install_official_component,
             components::uninstall_official_component,
+            components::consume_initial_component_selection,
             plugin_catalog::list_repository_plugins,
             plugin_catalog::download_repository_plugin,
             workspace::choose_workspace,

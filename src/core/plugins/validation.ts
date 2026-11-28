@@ -76,6 +76,13 @@ export function validatePluginManifest(value: unknown): PluginManifest {
     throw new PluginValidationError('contributes 须包含有效的贡献 ID。');
   }
   if (new Set(contributes).size !== contributes.length) throw new PluginValidationError('contributes 不能包含重复 ID。');
+  const commandLabels = object.commandLabels === undefined ? undefined : record(object.commandLabels, 'commandLabels');
+  if (commandLabels && (kind !== 'command' || Object.keys(commandLabels).length > contributes.length ||
+      Object.entries(commandLabels).some(([commandId, label]) =>
+        !contributes.includes(commandId) || typeof label !== 'string' || !label.trim() || label.length > 80 ||
+        /[\p{Cc}\p{Bidi_Control}]/u.test(label)))) {
+    throw new PluginValidationError('commandLabels 只能为已声明的命令提供简短、安全的显示名称。');
+  }
   if (!Array.isArray(object.permissions) || object.permissions.some(permission => !PERMISSIONS.includes(permission as PluginPermission))) {
     throw new PluginValidationError('permissions 包含未知权限。');
   }
@@ -96,6 +103,7 @@ export function validatePluginManifest(value: unknown): PluginManifest {
     kind,
     entry,
     contributes,
+    ...(commandLabels ? { commandLabels: { ...commandLabels } as Record<string, string> } : {}),
     permissions: [...object.permissions] as PluginPermission[],
     dependencies,
   };

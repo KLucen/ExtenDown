@@ -370,7 +370,7 @@ Function PageLeaveReinstall
   ${EndIf}
 
   reinst_uninstall:
-    Call ExtendownLoadChoices
+    Call ExtendownBackupComponentChoices
     HideWindow
     ClearErrors
 

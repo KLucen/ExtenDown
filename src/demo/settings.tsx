@@ -30,9 +30,21 @@ type Component = ComponentId;
 const FULL_COMPONENTS = new Set<Component>(COMPONENTS);
 const NO_COMPONENTS = new Set<Component>();
 const OFFICIAL_THEME_ID = 'org.extendown.theme.midnight';
-function mergeComponents(previous: ReadonlySet<Component> | null, installed: string[] | null): ReadonlySet<Component> {
-  if (installed === null) return FULL_COMPONENTS;
-  return new Set(COMPONENTS.filter(id => previous?.has(id) || installed.includes(id)));
+interface OfficialComponentSnapshot {
+  readonly revision: number;
+  readonly installed: string[];
+  readonly pending: string[];
+}
+
+type OfficialAction = 'install' | 'uninstall';
+interface OfficialOperation { id: Component; action: OfficialAction }
+
+interface RepositoryPlugin {
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly description: string;
+  readonly kind: 'command' | 'theme';
 }
 
 const LOADERS = {
@@ -100,24 +112,29 @@ function isNewerVersion(candidate: string, installed: string): boolean {
 
 export function useExtensions() {
   const [preferences, setPreferences] = useState(readPreferences);
-  const [installed, setInstalled] = useState<ReadonlySet<Component> | null>(() => isTauri() ? null : FULL_COMPONENTS);
+  const [componentSnapshot, setComponentSnapshot] = useState<OfficialComponentSnapshot | null | undefined>(
+    () => isTauri() ? undefined : null,
+  );
   const [loaded, setLoaded] = useState<Partial<Record<LazyComponent, PluginModule>>>({});
   const [extensionError, setExtensionError] = useState('');
-  const components = installed ?? NO_COMPONENTS;
+  const components = useMemo(() => componentSnapshot === null ? FULL_COMPONENTS : componentSnapshot
+    ? new Set(COMPONENTS.filter(id => componentSnapshot.installed.includes(id))) : NO_COMPONENTS, [componentSnapshot]);
+  const pendingComponents = useMemo(() => new Set(componentSnapshot?.pending), [componentSnapshot]);
   const officialThemeEnabled = !preferences.disabledThemes.includes(OFFICIAL_THEME_ID);
+  function acceptComponentSnapshot(snapshot: OfficialComponentSnapshot | null) {
+    setComponentSnapshot(previous => previous && (!snapshot || previous.revision >= snapshot.revision) ? previous : snapshot);
+  }
+
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
-    const subscription = listen<string[]>('official-components-changed', ({ payload }) => {
-      if (active) setInstalled(previous => mergeComponents(previous, payload));
+    const subscription = listen<OfficialComponentSnapshot>('official-components-changed', ({ payload }) => {
+      if (active) acceptComponentSnapshot(payload);
     }).catch(() => undefined);
-    void subscription.then(() => invoke<string[] | null>('installed_components')).then(result => {
-      if (active) setInstalled(previous => mergeComponents(previous, result));
+    void subscription.then(() => invoke<OfficialComponentSnapshot | null>('installed_components')).then(result => {
+      if (active) acceptComponentSnapshot(result);
     }, () => {
-      if (active) {
-        setInstalled(previous => previous ?? NO_COMPONENTS);
-        setExtensionError('无法读取桌面版已安装组件。');
-      }
+      if (active) setExtensionError('无法读取桌面版已安装组件。');
     });
     return () => {
       active = false;
@@ -125,10 +142,9 @@ export function useExtensions() {
     };
   }, []);
 
-  async function installComponent(id: Component) {
-    const result = await invoke<string[]>('install_official_component', { componentId: id });
-    if (!result.includes(id)) throw new Error('无法确认组件已安装。');
-    setInstalled(previous => mergeComponents(previous, result));
+  async function changeComponent(id: Component, action: OfficialAction) {
+    const command = action === 'install' ? 'install_official_component' : 'uninstall_official_component';
+    acceptComponentSnapshot(await invoke<OfficialComponentSnapshot>(command, { componentId: id }));
     setExtensionError('');
   }
 
@@ -212,8 +228,9 @@ export function useExtensions() {
 
   return {
     preferences, update, registry, themes, style, dark: selectedTheme?.id === DARK_THEME.id || selectedTheme?.id === 'org.extendown.theme.midnight',
-    markdown, formats, focusAvailable, components, extensionError, componentsReady: installed !== null,
-    install, installComponent,
+    markdown, formats, focusAvailable, components, pendingComponents, extensionError,
+    componentsReady: componentSnapshot !== undefined, canManageComponents: componentSnapshot != null,
+    install, changeComponent,
   };
 }
 
@@ -246,12 +263,11 @@ interface PluginFilter {
   state: 'all' | Exclude<ExtensionState, 'loading'>;
 }
 
-function Components({ plugins, filter, desktop, installingComponent, onInstall }: {
+function Components({ plugins, filter, operation, onChange }: {
   plugins: Extensions;
   filter: PluginFilter;
-  desktop: boolean;
-  installingComponent: Component | null;
-  onInstall: (id: Component) => void;
+  operation: OfficialOperation | null;
+  onChange: (id: Component, action: OfficialAction) => void;
 }) {
   const choices = OFFICIAL_COMPONENTS.flatMap(item => {
     const installed = plugins.components.has(item.id);
@@ -260,7 +276,7 @@ function Components({ plugins, filter, desktop, installingComponent, onInstall }
       const enabled = officialEnabled(plugins.preferences, item.id, format ?? (item.id === 'html' || item.id === 'pdf' ? item.id : undefined));
       const state: ExtensionState = !plugins.componentsReady ? 'loading' : !installed ? 'missing' : enabled ? 'enabled' : 'disabled';
       const label = format ? format.toUpperCase() + ' 导出' : item.name;
-      return { ...item, format, label, installed, enabled, state };
+      return { ...item, format, label, installed, enabled, state, pending: plugins.pendingComponents.has(item.id) };
     });
   }).filter(item => (filter.category === 'all' || item.category === filter.category) &&
     (filter.state === 'all' || filter.state === item.state) &&
@@ -277,12 +293,19 @@ function Components({ plugins, filter, desktop, installingComponent, onInstall }
               const enabled = event.target.checked;
               plugins.update(state => toggleOfficial(state, item.id, enabled, item.format));
             }} />}
-            <span><strong>{item.label}</strong> <small>{EXTENSION_STATE_LABELS[item.state]}</small><small>{item.description}</small></span>
+            <span><strong>{item.label}</strong> <small>{item.pending ? '待重新下载' : EXTENSION_STATE_LABELS[item.state]}</small><small>{item.description}</small></span>
           </label>
-          {desktop && item.state === 'missing' && <button type="button" className="setting-action" disabled={installingComponent !== null}
-            aria-label={'补装 ' + item.label} onClick={() => onInstall(item.id)}>
-            {installingComponent === item.id ? '正在补装…' : '补装'}
-          </button>}
+          {plugins.canManageComponents && <div className="component-actions">
+            {item.state === 'missing' && <button type="button" className="setting-action" disabled={operation !== null}
+              aria-label={'下载并安装 ' + item.label} onClick={() => onChange(item.id, 'install')}>
+              {operation?.id === item.id && operation.action === 'install' ? '正在下载…' : '下载并安装'}
+            </button>}
+            {(item.installed || item.pending) && item.format !== 'jpg' &&
+              <button type="button" className="setting-action" disabled={operation !== null}
+                aria-label={item.pending ? '取消恢复 ' + item.name : '卸载 ' + item.name} onClick={() => onChange(item.id, 'uninstall')}>
+                {operation?.id === item.id && operation.action === 'uninstall' ? '正在卸载…' : item.pending ? '取消恢复' : '卸载'}
+              </button>}
+          </div>}
         </div>)}
       </fieldset>;
     })}
@@ -317,32 +340,46 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [packageBusy, setPackageBusy] = useState(false);
-  const [installingComponent, setInstallingComponent] = useState<Component | null>(null);
+  const [repositoryPlugins, setRepositoryPlugins] = useState<RepositoryPlugin[]>();
+  const [repositoryLoading, setRepositoryLoading] = useState(false);
+  const [repositoryError, setRepositoryError] = useState('');
+  const [componentOperation, setComponentOperation] = useState<OfficialOperation | null>(null);
   const [componentFeedback, setComponentFeedback] = useState<{ message: string; error?: boolean }>();
   const [tab, setTab] = useState(initialTab);
   const [filter, setFilter] = useState<PluginFilter>({ query: pluginQuery, category: 'all', state: 'all' });
   const confirmation = useConfirmation();
   useEffect(() => { dialog.current?.showModal(); }, []);
 
-  async function installOfficial(id: Component) {
+  async function changeOfficial(id: Component, action: OfficialAction) {
+    if (componentOperation) return;
     const name = OFFICIAL_COMPONENTS.find(component => component.id === id)?.name ?? id;
+    const pending = plugins.pendingComponents.has(id);
+    if (action === 'uninstall' && !await confirmation.confirm({
+      title: pending ? '取消恢复组件' : '卸载组件',
+      description: pending ? `取消恢复「${name}」。之后仍可从插件页下载安装。` : `卸载「${name}」。之后可从插件页重新安装。`,
+      confirmLabel: pending ? '取消恢复' : '卸载',
+      variant: 'danger',
+    })) return;
+    const label = action === 'install' ? '安装' : pending ? '取消恢复' : '卸载';
     setComponentFeedback(undefined);
-    setInstallingComponent(id);
+    setComponentOperation({ id, action });
     try {
-      await plugins.installComponent(id);
-      setComponentFeedback({ message: `已补装 ${name}。` });
+      await plugins.changeComponent(id, action);
+      setComponentFeedback({ message: `已${label} ${name}。` });
     } catch (reason) {
-      setComponentFeedback({ message: errorMessage(reason, `无法补装 ${name}。`), error: true });
+      setComponentFeedback({ message: errorMessage(reason, `无法${label} ${name}。`), error: true });
     } finally {
-      setInstallingComponent(null);
+      setComponentOperation(null);
     }
   }
 
-  async function install(buffer: ArrayBuffer) {
+  async function install(buffer: ArrayBuffer | Uint8Array, expected?: RepositoryPlugin) {
     setStatus('');
     setError('');
     try {
       const item = readPluginPackage(buffer);
+      if (expected && (item.manifest.id !== expected.id || item.manifest.version !== expected.version ||
+        item.manifest.kind !== expected.kind)) throw new Error('插件包与 GitHub 目录中的信息不一致。');
       if ('source' in item) {
         const previous = await getScriptPlugin(item.manifest.id);
         if (previous && !await confirmation.confirm({
@@ -358,6 +395,33 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
       }
     } catch (reason) {
       setError(errorMessage(reason, '无法安装插件包。'));
+    }
+  }
+
+  async function listRepositoryPlugins() {
+    setRepositoryLoading(true);
+    setRepositoryError('');
+    try {
+      setRepositoryPlugins(await invoke<RepositoryPlugin[]>('list_repository_plugins'));
+    } catch (reason) {
+      setRepositoryError(errorMessage(reason, '无法读取 GitHub 插件目录。'));
+    } finally {
+      setRepositoryLoading(false);
+    }
+  }
+
+  async function installRepositoryPlugin(item: RepositoryPlugin) {
+    setPackageBusy(true);
+    setRepositoryError('');
+    setError('');
+    setStatus('');
+    try {
+      const bytes = await invoke<number[]>('download_repository_plugin', { id: item.id, version: item.version });
+      await install(new Uint8Array(bytes), item);
+    } catch (reason) {
+      setRepositoryError(errorMessage(reason, '无法从 GitHub 下载插件。'));
+    } finally {
+      setPackageBusy(false);
     }
   }
 
@@ -463,6 +527,18 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
     (filter.category === 'all' || filter.category === 'command') &&
     (filter.state === 'all' || filter.state === (record.enabled ? 'enabled' : 'disabled')) &&
     matchesComponent(filter.query, record.current.manifest.name, record.current.manifest.id, ...record.current.manifest.contributes));
+  const visibleRepositoryPlugins = repositoryPlugins?.flatMap(item => {
+    const script = scripts.records.find(record => record.current.manifest.id === item.id);
+    const theme = plugins.preferences.packages.find(pkg => pkg.manifest.id === item.id);
+    const installed = item.kind === 'command' ? script?.current.manifest.version : theme?.manifest.version;
+    const enabled = item.kind === 'command' ? script?.enabled : theme && !plugins.preferences.disabledThemes.includes(item.id);
+    const state: ExtensionState = !installed ? 'missing' : enabled ? 'enabled' : 'disabled';
+    const category = item.kind === 'command' ? 'command' : 'appearance';
+    return (filter.category === 'all' || filter.category === category) &&
+      (filter.state === 'all' || filter.state === state) &&
+      matchesComponent(filter.query, item.name, item.description, item.id)
+      ? [{ ...item, installed, state, available: !installed || isNewerVersion(item.version, installed) }] : [];
+  });
   return <>
   <dialog className="settings-modal" ref={dialog} aria-labelledby="settings-title" onClose={onClose}>
     <div className="modal-head"><h2 id="settings-title">设置</h2>
@@ -526,8 +602,29 @@ export function Settings({ desktop, plugins, scripts, drafts, draftBusy = false,
       {componentFeedback && <p role={componentFeedback.error ? 'alert' : 'status'} className={componentFeedback.error ? 'error' : undefined}>
         {componentFeedback.message}
       </p>}
-      <Components plugins={plugins} filter={filter} desktop={desktop} installingComponent={installingComponent}
-        onInstall={id => void installOfficial(id)} />
+      <Components plugins={plugins} filter={filter} operation={componentOperation}
+        onChange={(id, action) => void changeOfficial(id, action)} />
+      {desktop && <div className="repository-plugins">
+        <div className="setting-field">
+          <h3>GitHub 插件目录</h3>
+          <button type="button" className="setting-action" disabled={repositoryLoading || packageBusy}
+            onClick={() => void listRepositoryPlugins()}>
+            {repositoryLoading ? '正在读取…' : repositoryPlugins ? '刷新目录' : '查看插件'}
+          </button>
+        </div>
+        {repositoryError && <div className="error" role="alert">{repositoryError}</div>}
+        {visibleRepositoryPlugins?.length === 0 && !repositoryLoading && !repositoryError &&
+          <p role="status">没有符合筛选条件的插件。</p>}
+        {visibleRepositoryPlugins?.map(item => <div className="script-plugin" key={item.id}>
+          <strong>{item.name}</strong>
+          <small>{item.kind === 'command' ? '命令' : '主题'} · v{item.version} · {EXTENSION_STATE_LABELS[item.state]}</small>
+          <small>{item.description}</small>
+          {item.available && <button type="button" className="setting-action" disabled={packageBusy || repositoryLoading}
+            aria-label={`下载并${item.installed ? '更新' : '安装'} ${item.name}`} onClick={() => void installRepositoryPlugin(item)}>
+            {item.installed ? '下载并更新' : '下载并安装'}
+          </button>}
+        </div>)}
+      </div>}
       {visibleThemes.length > 0 && <h3>本地主题</h3>}
       {visibleThemes.map(item => <div className="plugin-row" key={item.manifest.id}>
         <label><input type="checkbox" checked={!plugins.preferences.disabledThemes.includes(item.manifest.id)}

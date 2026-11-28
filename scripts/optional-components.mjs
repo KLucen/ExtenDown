@@ -1,43 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { COMPONENT_CATEGORIES, COMPONENT_PRESETS, OFFICIAL_COMPONENTS } from '../src/core/plugins/component-catalog.ts';
+import { OFFICIAL_COMPONENTS } from '../src/core/plugins/component-catalog.ts';
 
-const output = fileURLToPath(new URL('../src-tauri/target/optional-components/', import.meta.url));
-const portable = fileURLToPath(new URL('../src-tauri/target/release/extendown-components/', import.meta.url));
+const output = fileURLToPath(new URL('../src-tauri/target/optional-components/available/', import.meta.url));
 const groups = Object.fromEntries(OFFICIAL_COMPONENTS.map(item => [item.id, item.entries]));
-
-function nsisCatalog() {
-  const lines = [];
-  const macro = (name, commands) => lines.push(`!macro ${name}`, ...commands.map(command => '  ' + command), '!macroend', '');
-  for (const [name, command] of [
-    ['DECLARE', 'ExtendownDeclare'], ['LOAD', 'ExtendownLoadChoice'],
-    ['READ', 'ExtendownReadCheckbox'], ['SAVE', 'ExtendownSaveChoice'],
-  ]) macro('EXTENDOWN_COMPONENT_' + name, OFFICIAL_COMPONENTS.map(item => `!insertmacro ${command} ${item.id}`));
-  const choices = [];
-  const columns = [['writing', 'view'], ['export', 'appearance']];
-  for (const [column, categories] of columns.entries()) {
-    let row = 32;
-    const left = column === 0 ? 0 : 50;
-    for (const category of categories) {
-      choices.push(`!insertmacro ExtendownCategory "${COMPONENT_CATEGORIES[category]}" ${left}% ${row}u`);
-      row += 12;
-      for (const item of OFFICIAL_COMPONENTS.filter(item => item.category === category)) {
-        choices.push(`!insertmacro ExtendownCheckbox ${item.id} "${item.name}" ${left + 2}% ${row}u`);
-        row += 13;
-      }
-      row += 4;
-    }
-  }
-  macro('EXTENDOWN_COMPONENT_CHECKS', choices);
-  for (const [name, selected] of Object.entries(COMPONENT_PRESETS)) {
-    macro('EXTENDOWN_COMPONENT_' + name.toUpperCase(), OFFICIAL_COMPONENTS.map(item =>
-      `!insertmacro ExtendownSetCheck ${item.id} ${selected.includes(item.id) ? 1 : 0}`));
-  }
-  return lines.join('\n');
-}
 
 function reachable(bundle, starts, blocker = () => false) {
   const visited = new Set();
@@ -56,21 +25,6 @@ function reachable(bundle, starts, blocker = () => false) {
   return visited;
 }
 
-function nsisInventory(assets) {
-  const lines = [
-    '!macro EXTENDOWN_COMPONENT_FILES',
-    '  SetOutPath "$INSTDIR\\extendown-components\\assets"',
-  ];
-  for (const [file, { components }] of Object.entries(assets)) {
-    const tests = components.map((group, index) => '  ${'+ (index === 0 ? 'If' : 'OrIf') + '} $pick_' + group + ' = 1');
-    lines.push(...tests);
-    lines.push('    File "${EXTENDOWN_FILES}\\' + file.replaceAll('/', '\\') + '"');
-    lines.push('  ${EndIf}');
-  }
-  lines.push('!macroend', '');
-  return lines.join('\n');
-}
-
 function clearGeneratedFiles(folder) {
   mkdirSync(folder, { recursive: true });
   for (const entry of readdirSync(folder, { withFileTypes: true })) {
@@ -78,8 +32,8 @@ function clearGeneratedFiles(folder) {
   }
 }
 
-// Preserve Rollup's URLs while moving selected code out of Tauri's embedded
-// frontend. The Windows host serves these files using the embedded manifest.
+// Keep Rollup's URLs and publish the removed chunks as GitHub Release assets.
+// The Windows host serves installed chunks using the embedded manifest.
 export function optionalComponents() {
   let active = false;
   return {
@@ -122,36 +76,19 @@ export function optionalComponents() {
           owners.get(file).push(group);
         }
       }
-      clearGeneratedFiles(resolve(output, 'assets'));
-      const availableFolder = resolve(output, 'available');
-      clearGeneratedFiles(availableFolder);
+      clearGeneratedFiles(output);
       const assets = {};
       for (const [file, components] of [...owners.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const item = bundle[file];
         const contents = item.type === 'chunk' ? item.code : item.source;
         assets[file] = { sha256: createHash('sha256').update(contents).digest('hex'), components };
-        writeFileSync(resolve(output, file), contents);
-        writeFileSync(resolve(availableFolder, file.slice('assets/'.length) + '.gz'), gzipSync(contents, { level: 9 }));
+        writeFileSync(resolve(output, file.slice('assets/'.length) + '.gz'), gzipSync(contents, { level: 9 }));
         delete bundle[file];
       }
-      writeFileSync(resolve(output, 'component-files.nsh'), nsisInventory(assets));
-      writeFileSync(resolve(output, 'component-catalog.nsh'), nsisCatalog());
       this.emitFile({ type: 'asset', fileName: 'optional-assets.json',
         source: JSON.stringify({ groups: Object.keys(groups), assets }) });
-      this.info('Separated ' + owners.size + ' component assets from the Windows editor executable.');
+      this.info('Prepared ' + owners.size + ' downloadable assets for the ExtendownPlugin release.');
       },
-    },
-    writeBundle() {
-      if (!active) return;
-      for (const directory of ['assets', 'available']) {
-        const folder = resolve(portable, directory);
-        clearGeneratedFiles(folder);
-        for (const entry of readdirSync(resolve(output, directory))) {
-          writeFileSync(resolve(folder, entry), readFileSync(resolve(output, directory, entry)));
-        }
-      }
-      writeFileSync(resolve(portable, 'selection.ini'), '[components]\n' +
-        Object.keys(groups).map(group => group + '=1\n').join(''));
     },
   };
 }

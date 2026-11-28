@@ -3,6 +3,7 @@
 mod components;
 mod document;
 mod export;
+mod plugin_catalog;
 mod recovery;
 mod updates;
 mod workspace;
@@ -614,6 +615,9 @@ fn main() {
             export::save_export,
             components::installed_components,
             components::install_official_component,
+            components::uninstall_official_component,
+            plugin_catalog::list_repository_plugins,
+            plugin_catalog::download_repository_plugin,
             workspace::choose_workspace,
             workspace::close_workspace,
             workspace::workspace_list,

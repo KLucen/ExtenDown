@@ -4,7 +4,7 @@
 !define EXTENDOWN_CAPABILITIES "Software\ExtenDown\Capabilities"
 
 !macro NSIS_HOOK_POSTINSTALL
-  !insertmacro ExtendownInstallComponents
+  !insertmacro ExtendownMigrateComponents
   WriteRegStr SHCTX "Software\Classes\${EXTENDOWN_PROG_ID}" "" "ExtenDown Markdown document"
   WriteRegStr SHCTX "Software\Classes\${EXTENDOWN_PROG_ID}\DefaultIcon" "" '$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0'
   WriteRegStr SHCTX "Software\Classes\${EXTENDOWN_PROG_ID}\shell\open\command" "" '$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\"'
@@ -19,9 +19,9 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  !insertmacro ExtendownRemoveComponents
-  RMDir "$INSTDIR"
   ${If} $UpdateMode <> 1
+    !insertmacro ExtendownRemoveComponents
+    RMDir "$INSTDIR"
     ReadRegStr $0 SHCTX "${MANUPRODUCTKEY}" ""
     ${If} $0 == $INSTDIR
       DeleteRegValue SHCTX "${MANUPRODUCTKEY}" ""

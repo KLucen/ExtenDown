@@ -24,11 +24,11 @@ npm run tauri -- build --bundles nsis -- --locked
 
 `vite.config.ts` 与 `src-tauri/tauri.conf.json` 共享开发地址。Vite 使用 `strictPort`，生产应用从 `dist/` 加载内嵌资源。独立可执行程序位于 `src-tauri/target/release/`。Windows 安装器位于该目录下的 `bundle/nsis/`，Windows 专用配置见 `src-tauri/tauri.windows.conf.json`。[Tauri 的 Vite 配置](https://v2.tauri.app/start/frontend/vite/) · [Windows 打包](https://v2.tauri.app/distribute/windows-installer/)
 
-Windows 便携版本由 `extendown.exe` 和同目录的 `extendown-components/` 组成，可一起复制。用 NSIS 安装时，安装器根据组件页的选择复制官方扩展，核心编辑器和原生文件服务始终安装。
+Windows 的 `extendown.exe` 和 NSIS 安装器可直接提供核心编辑器。下载组件后，便携版本可连同同目录的 `extendown-components/` 一起复制。
 
 Windows 当前用户默认安装到 `%LOCALAPPDATA%\extendown\app`。安装向导可更改目标目录，命令行也支持显式的 `/D=` 路径。升级时沿用仍有有效卸载登记的安装目录。卸载时移除该目录对应的安装路径记录。
 
-每轮开发验收后，从 `bundle/nsis/` 运行新版本安装包覆盖更新。向导默认保留当前安装，组件页沿用旧版已安装组件。自动化覆盖更新可在关闭 ExtenDown 后运行 `ExtenDown_<版本>_x64-setup.exe /S /UPDATE`。
+每轮开发验收后，从 `bundle/nsis/` 运行新版本安装包覆盖更新。向导保留已有组件选择，文件校验通过的组件可以直接继续使用。自动化覆盖更新可在关闭 ExtenDown 后运行 `ExtenDown_<版本>_x64-setup.exe /S /UPDATE`。
 
 ## 窗口与文档
 
@@ -61,7 +61,7 @@ Windows 的 NSIS 安装器通过 `src-tauri/windows/file-associations.nsh` 注�
 
 首次启动直接进入编辑器。预览及并排中可单击正文、标题或表格单元格开始编辑，键盘也可聚焦后按 Enter。普通文字输入实时同步到源码，输入法在候选确认后同步。预览保留段落内的软换行和顶层 Markdown 块之间的额外空行。在正文编辑中按 Enter 从光标处拆段，焦点落在新段落，粗体和斜体随文字一起回写。数学扩展支持 `$…$` 和 `$$` 公式，可离线渲染为 MathML。Mermaid 从 `mermaid` 围栏生成图像，关闭模块或排版失败时保留代码块。高亮支持 Bash、CSS、JavaScript、JSON、Python、Rust、SQL、TypeScript 与 XML/HTML。
 
-Windows 安装器的组件页提供 HTML、PDF、PNG/JPG、数学公式、Mermaid、专注视图、额外代码语言和 Midnight 主题。额外语言包提供 C、C++、C#、Go、Java、Lua、Markdown 和 PowerShell。「设置 → 插件」展示全部官方组件，已安装组件可启停，未安装组件可离线补装。PNG 和 JPG 共用一套安装资源，可在安装后分别启停。
+Windows 首次安装包含核心功能。「设置 → 插件」提供 HTML、PDF、PNG/JPG、数学公式、Mermaid、专注视图、额外代码语言和 Midnight 主题的下载、启停和卸载。PNG 和 JPG 共用一套安装资源，可在安装后分别启停。
 
 ### 官方模块
 
@@ -71,9 +71,9 @@ Windows 安装器的组件页提供 HTML、PDF、PNG/JPG、数学公式、Mermai
 2. 在功能宿主消费贡献。语法模块在安全 Markdown 投影后接入渲染，视图模块由编辑器消费，导出器在 `src/core/export/` 读取只读文档快照。新的导出格式同时声明输出文件后缀和保存规则。
 3. 在 `tests/core/plugins.test.ts` 覆盖激活、停用和兼容性，在相应功能入口验证贡献生效。文件、窗口和对话框通过固定的 Tauri 命令实现，原生改动随应用编译发布。
 
-若模块需要独立安装，在 `scripts/optional-components.mjs` 登记动态入口，并将组件 ID 接入 `src-tauri/windows/components.nsh`。Windows 构建从内嵌资源中移出该入口的专用代码，NSIS 根据组件选择复制文件。Rust 宿主只从本版内置的资源清单中查找这些文件，并在加载前核对 SHA-256。两个组件共用的导出渲染资源随任一需要它的组件安装。
+为可选组件在 `src/core/plugins/component-catalog.ts` 登记动态入口。Windows 构建将独立资源压缩到 `src-tauri/target/optional-components/available/`，应用内嵌对应的资源清单及 SHA-256。将本次构建生成的所有 `.gz` 文件上传到 ExtendownPlugin 对应应用版本的 Release。Rust 宿主仅下载用户所选组件缺少的资源，校验后写入安装目录。多个组件可复用已校验的共享资源。[组件发布仓库](https://github.com/KLucen/ExtendownPlugin)
 
-Windows 安装器在 `extendown-components/available/` 放置压缩的官方组件资源。补装时，Rust 按当前版本的内置清单校验并恢复资源，写入所选组件，再向各窗口广播更新。「安装插件文件」用于导入数据型主题和命令插件包。
+插件目录读取 ExtendownPlugin 的 `catalog.json`，并从对应 Release 下载数据型主题和命令插件包。安装与卸载立即更新应用的插件列表。「安装插件文件」可从本地导入同格式的包。[插件目录](https://github.com/KLucen/ExtendownPlugin/blob/main/catalog.json)
 
 ### 主题包
 

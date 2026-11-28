@@ -16,10 +16,10 @@ node --experimental-strip-types scripts/create-extendown-plugin.mjs validate ./w
 
 脚手架创建 `manifest.json`、`plugin.js` 和编辑器使用的 `extendown-plugin.d.ts`。校验器使用应用的包规则，并编译检查 JavaScript 语法。插件运行效果和返回数据应在应用中验证。工作目录和输出文件需使用新路径。
 
-仓库中的示例同时提供字符统计和文末换行两个命令。可直接打包体验。 [示例清单](../examples/plugin-markdown-tools/manifest.json) · [示例代码](../examples/plugin-markdown-tools/plugin.js) · [SDK 类型](../sdk/extendown-plugin.d.ts)
+独立插件示例由 ExtendownPlugin 仓库维护。Markdown 文本工具提供字符统计和文末换行两个命令。把 ExtendownPlugin 克隆到 ExtenDown 仓库的同级目录后，可以直接打包体验。[命令插件示例](https://github.com/KLucen/ExtendownPlugin/tree/main/examples/plugin-markdown-tools) · [SDK 类型](../sdk/extendown-plugin.d.ts)
 
 ```powershell
-node --experimental-strip-types scripts/create-extendown-plugin.mjs pack ./examples/plugin-markdown-tools ./markdown-tools.edplugin
+node --experimental-strip-types scripts/create-extendown-plugin.mjs pack ../ExtendownPlugin/examples/plugin-markdown-tools ./markdown-tools.edplugin
 ```
 
 ## 编写清单
@@ -74,5 +74,7 @@ function run(input) {
 2. 在「第三方命令插件」中点击「启用」，核对该版本请求的权限并确认。
 3. 从顶栏「命令」选择命令并点击「运行」。返回 `source` 时，在「审阅文档变更」确认并点击「应用变更」。
 4. 更新时保留同一个 ID，提高 `version`，然后安装新版包。应用保留上一个版本，可在插件行选择「回滚」。更新和回滚后均需为该版本确认权限并重新启用。
+
+要从应用内的「GitHub 插件目录」分发插件，先将验证后的 `.edplugin` 发布到 ExtendownPlugin 的 Release，再将插件 ID、版本、类型、Release 标签、附件名和 SHA-256 加入该仓库的 `catalog.json`。[插件仓库](https://github.com/KLucen/ExtendownPlugin)
 
 主题 `.edplugin` 继续使用原有主题格式，可通过同一入口安装。 [主题包格式](TAURI-GUIDE.zh-CN.md#主题包)

@@ -23,11 +23,6 @@ export type ExtensionState = 'enabled' | 'disabled' | 'missing' | 'loading';
 export const EXTENSION_STATE_LABELS: Record<ExtensionState, string> = {
   enabled: '已启用', disabled: '已停用', missing: '未安装', loading: '正在检查',
 };
-export const COMPONENT_PRESETS = {
-  minimal: ['html'] as readonly ComponentId[],
-  recommended: OFFICIAL_COMPONENTS.map(item => item.id) as readonly ComponentId[],
-};
-
 export function matchesComponent(query: string, ...fields: string[]): boolean {
   const searchable = fields.join(' ').toLocaleLowerCase();
   return query.trim().toLocaleLowerCase().split(/\s+/u).every(term => searchable.includes(term));

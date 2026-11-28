@@ -21,7 +21,7 @@ function resultMessage(result: UpdateResult): string {
 function checkError(reason: unknown): string {
   switch (reason) {
     case 'update-network': return '无法连接 GitHub，请检查网络后重试。';
-    case 'update-rate-limited': return 'GitHub 请求次数已达上限，请稍后重试。';
+    case 'update-rate-limited': return 'GitHub 暂时限制了请求，请稍后重试。';
     case 'update-invalid-release': return 'GitHub 发布信息中的版本号无效。';
     default: return '检查更新失败，请稍后重试。';
   }

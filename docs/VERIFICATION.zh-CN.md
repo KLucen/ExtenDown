@@ -1,5 +1,9 @@
 # ExtenDown 验收记录
 
+## 0.1.8 更新检查
+
+Windows 安装版用 GitHub 公开 Releases 页面进行更新检查，不再依赖有未认证请求配额的 REST API。实测识别已发布的 0.1.7，显示当前版本已是最新版本，并核对了 0.1.7 Windows 安装包链接。4 项更新版本与重定向单测、116 项前端测试、30 项 Rust 测试、TypeScript 和 Windows x64 NSIS 构建通过。
+
 ## 0.1.7 官方组件按需安装
 
 | 验收项 | 结果 |
